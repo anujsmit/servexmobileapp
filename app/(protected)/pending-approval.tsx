@@ -28,8 +28,6 @@ export default function PendingApprovalScreen() {
         await getMe();
     }, [getMe]);
 
-    // When user gets approved, AuthGuard will redirect automatically via the
-    // approval guard — but we also reactively push the user on state change
     useEffect(() => {
         if (user?.approvalStatus === 'approved') {
             router.replace(ROUTES.MISTRI.HOME as any);

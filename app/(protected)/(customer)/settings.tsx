@@ -72,7 +72,7 @@ export default function CustomerSettingsScreen() {
     }
 
     return (
-        <SafeAreaContainer>
+        <SafeAreaContainer showBottomNav>
             <PageTitle
                 title="Settings"
                 subtitle="Account, bookings & preferences"

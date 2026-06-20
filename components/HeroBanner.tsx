@@ -1,137 +1,169 @@
-import React, { useState, useRef, useEffect } from 'react';
+// components/HeroBanner.tsx
+import React, { useRef, useState, useEffect } from 'react';
 import {
     View,
-    Image,
+    Text,
     StyleSheet,
+    FlatList,
+    Image,
+    Dimensions,
     TouchableOpacity,
-    ScrollView,
-    NativeSyntheticEvent,
-    NativeScrollEvent,
     ActivityIndicator,
-    useWindowDimensions,
 } from 'react-native';
-import { API_BASE_URL } from '../lib/config';
-import {
-    customerBrand,
-    customerDashboardColors as C,
-    customerDashboardElevation as ELEV,
-} from '../lib/customerDashboardTokens';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialIcons } from '@expo/vector-icons';
 
-const H_INSET = 16;
-const CARD_HEIGHT = 176;
-const SECTION_PADDING_TOP = 12;
-const SECTION_PADDING_BOTTOM = 10;
+const { width: screenWidth } = Dimensions.get('window');
 
 interface Banner {
     id: string;
+    title: string | null;
+    subtitle: string | null;
     imageUrl: string;
-    title?: string;
-    subtitle?: string;
-    linkUrl?: string;
+    videoUrl: string | null;
+    linkUrl: string | null;
+    displayOrder: number;
+    isActive: boolean;
+    adType: 'ad1' | 'ad2' | 'both';
 }
 
-export const HeroBanner: React.FC = () => {
-    const { width: windowWidth } = useWindowDimensions();
-    const [banners, setBanners] = useState<Banner[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [activeIndex, setActiveIndex] = useState(0);
-    const scrollViewRef = useRef<ScrollView>(null);
+interface HeroBannerProps {
+    banners: Banner[];
+    autoScroll?: boolean;
+    interval?: number;
+    onBannerPress?: (banner: Banner) => void;
+}
+
+export const HeroBanner: React.FC<HeroBannerProps> = ({
+    banners,
+    autoScroll = true,
+    interval = 3000,
+    onBannerPress,
+}) => {
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const flatListRef = useRef<FlatList>(null);
+    const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Filter out inactive banners
+    const activeBanners = banners.filter(b => b.isActive !== false);
 
     useEffect(() => {
-        let cancelled = false;
-        const fetchBanners = async () => {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/hero-banners`);
-                if (!res.ok) throw new Error('Failed to fetch');
-                const data = await res.json();
-                if (!cancelled) setBanners(data.banners ?? []);
-            } catch {
-                // silently fall back to no banners
-            } finally {
-                if (!cancelled) setLoading(false);
+        if (autoScroll && activeBanners.length > 1) {
+            timerRef.current = setInterval(() => {
+                setCurrentIndex((prev) => (prev + 1) % activeBanners.length);
+            }, interval);
+        }
+        return () => {
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
             }
         };
-        fetchBanners();
-        return () => {
-            cancelled = true;
-        };
-    }, []);
+    }, [autoScroll, activeBanners.length, interval]);
 
     useEffect(() => {
-        if (banners.length <= 1) return;
-        const interval = setInterval(() => {
-            setActiveIndex((current) => {
-                const next = (current + 1) % banners.length;
-                scrollViewRef.current?.scrollTo({ x: next * windowWidth, animated: true });
-                return next;
+        if (flatListRef.current && activeBanners.length > 0) {
+            flatListRef.current.scrollToIndex({
+                index: currentIndex,
+                animated: true,
             });
-        }, 5000);
-        return () => clearInterval(interval);
-    }, [banners.length, windowWidth]);
+        }
+    }, [currentIndex]);
 
-    const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-        const index = Math.round(event.nativeEvent.contentOffset.x / windowWidth);
-        setActiveIndex(index);
-    };
+    const renderBanner = ({ item }: { item: Banner }) => {
+        const isVideoAd = item.videoUrl && item.adType === 'ad2';
 
-    const cardShellStyle = {
-        marginHorizontal: H_INSET,
-        height: CARD_HEIGHT,
-        borderRadius: 16,
-        borderCurve: 'continuous' as const,
-        overflow: 'hidden' as const,
-        borderWidth: 1,
-        borderColor: C.cardBorder,
-        boxShadow: ELEV.card,
-    };
-
-    if (loading) {
         return (
-            <View style={styles.section}>
-                <View style={[styles.cardShell, cardShellStyle]}>
-                    <View style={styles.loadingInner}>
-                        <ActivityIndicator size="small" color={customerBrand.accent} />
+            <TouchableOpacity
+                style={styles.bannerContainer}
+                activeOpacity={0.9}
+                onPress={() => onBannerPress?.(item)}
+                disabled={!onBannerPress}
+            >
+                {item.imageUrl ? (
+                    <Image
+                        source={{ uri: item.imageUrl }}
+                        style={styles.bannerImage}
+                        resizeMode="cover"
+                    />
+                ) : (
+                    <LinearGradient
+                        colors={['#e67e22', '#f39c12']}
+                        style={styles.bannerPlaceholder}
+                    >
+                        <MaterialIcons name="image" size={40} color="rgba(255,255,255,0.5)" />
+                    </LinearGradient>
+                )}
+
+                {isVideoAd && (
+                    <View style={styles.videoBadge}>
+                        <MaterialIcons name="play-circle" size={20} color="#fff" />
+                        <Text style={styles.videoBadgeText}>Video</Text>
                     </View>
-                </View>
+                )}
+
+                {(item.title || item.subtitle) && (
+                    <LinearGradient
+                        colors={['transparent', 'rgba(0,0,0,0.7)']}
+                        style={styles.overlay}
+                    >
+                        <View style={styles.textContainer}>
+                            {item.title && (
+                                <Text style={styles.bannerTitle} numberOfLines={1}>
+                                    {item.title}
+                                </Text>
+                            )}
+                            {item.subtitle && (
+                                <Text style={styles.bannerSubtitle} numberOfLines={1}>
+                                    {item.subtitle}
+                                </Text>
+                            )}
+                        </View>
+                    </LinearGradient>
+                )}
+            </TouchableOpacity>
+        );
+    };
+
+    if (activeBanners.length === 0) {
+        return (
+            <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>No banners available</Text>
             </View>
         );
     }
 
-    if (banners.length === 0) return null;
-
     return (
-        <View style={styles.section}>
-            <ScrollView
-                ref={scrollViewRef}
+        <View style={styles.wrapper}>
+            <FlatList
+                ref={flatListRef}
+                data={activeBanners}
+                renderItem={renderBanner}
+                keyExtractor={(item) => item.id}
                 horizontal
                 pagingEnabled
                 showsHorizontalScrollIndicator={false}
-                onScroll={handleScroll}
-                scrollEventThrottle={16}
-                contentInsetAdjustmentBehavior="automatic"
-                style={styles.slider}
-            >
-                {banners.map((banner) => (
-                    <View key={banner.id} style={[styles.slidePage, { width: windowWidth }]}>
-                        <TouchableOpacity activeOpacity={0.92} style={styles.cardPressable}>
-                            <View style={[styles.cardShell, cardShellStyle]}>
-                                <Image
-                                    source={{ uri: banner.imageUrl }}
-                                    style={styles.bannerImage}
-                                    resizeMode="cover"
-                                />
-                            </View>
-                        </TouchableOpacity>
-                    </View>
-                ))}
-            </ScrollView>
-
-            {banners.length > 1 && (
-                <View style={styles.pagination}>
-                    {banners.map((_, index) => (
+                scrollEnabled={activeBanners.length > 1}
+                onMomentumScrollEnd={(event) => {
+                    const index = Math.round(
+                        event.nativeEvent.contentOffset.x / screenWidth
+                    );
+                    setCurrentIndex(index);
+                }}
+                getItemLayout={(_, index) => ({
+                    length: screenWidth,
+                    offset: screenWidth * index,
+                    index,
+                })}
+            />
+            {activeBanners.length > 1 && (
+                <View style={styles.dotsContainer}>
+                    {activeBanners.map((_, index) => (
                         <View
                             key={index}
-                            style={[styles.dot, index === activeIndex && styles.activeDot]}
+                            style={[
+                                styles.dot,
+                                index === currentIndex && styles.activeDot,
+                            ]}
                         />
                     ))}
                 </View>
@@ -141,51 +173,101 @@ export const HeroBanner: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-    section: {
-        width: '100%',
-        paddingTop: SECTION_PADDING_TOP,
-        paddingBottom: SECTION_PADDING_BOTTOM,
-        backgroundColor: C.canvas,
+    wrapper: {
+        position: 'relative',
+        height: 160,
+        borderRadius: 16,
+        overflow: 'hidden',
     },
-    slider: {
-        backgroundColor: C.canvas,
-    },
-    slidePage: {
-        backgroundColor: C.canvas,
-    },
-    cardShell: {
-        backgroundColor: C.cardFill,
-    },
-    cardPressable: {
-        width: '100%',
+    bannerContainer: {
+        width: screenWidth - 40,
+        height: 160,
+        borderRadius: 16,
+        overflow: 'hidden',
+        marginHorizontal: 0,
     },
     bannerImage: {
         width: '100%',
         height: '100%',
     },
-    loadingInner: {
-        flex: 1,
-        alignItems: 'center',
+    bannerPlaceholder: {
+        width: '100%',
+        height: '100%',
         justifyContent: 'center',
-        minHeight: CARD_HEIGHT,
+        alignItems: 'center',
     },
-    pagination: {
+    overlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: 16,
+        minHeight: 60,
+        justifyContent: 'flex-end',
+    },
+    textContainer: {
+        gap: 2,
+    },
+    bannerTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#ffffff',
+        textShadowColor: 'rgba(0,0,0,0.3)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 4,
+    },
+    bannerSubtitle: {
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.9)',
+        textShadowColor: 'rgba(0,0,0,0.3)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 4,
+    },
+    videoBadge: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+        gap: 4,
+    },
+    videoBadgeText: {
+        fontSize: 10,
+        color: '#ffffff',
+        fontWeight: '600',
+    },
+    dotsContainer: {
+        position: 'absolute',
+        bottom: 8,
+        left: 0,
+        right: 0,
         flexDirection: 'row',
         justifyContent: 'center',
-        alignItems: 'center',
-        gap: 8,
-        marginTop: 10,
-        paddingHorizontal: H_INSET,
+        gap: 6,
     },
     dot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        borderCurve: 'continuous',
-        backgroundColor: 'rgba(15, 23, 42, 0.2)',
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: 'rgba(255,255,255,0.4)',
     },
     activeDot: {
-        backgroundColor: customerBrand.accent,
-        width: 22,
+        backgroundColor: '#ffffff',
+        width: 18,
+    },
+    emptyContainer: {
+        height: 160,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#f1f5f9',
+        borderRadius: 16,
+    },
+    emptyText: {
+        color: '#94a3b8',
+        fontSize: 14,
     },
 });

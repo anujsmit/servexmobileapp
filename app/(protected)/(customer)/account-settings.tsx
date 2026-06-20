@@ -151,7 +151,7 @@ export default function CustomerAccountSettingsScreen() {
     };
 
     return (
-        <SafeAreaContainer style={styles.safeRoot}>
+        <SafeAreaContainer style={styles.safeRoot} showBottomNav>
             <PageTitle
                 title="Account & privacy"
                 variant="mistri"
