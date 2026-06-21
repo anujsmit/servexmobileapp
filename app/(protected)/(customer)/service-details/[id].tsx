@@ -1,4 +1,5 @@
 // app/(protected)/(customer)/service-details/[id].tsx
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -364,51 +365,103 @@ export default function ServiceDetailsScreen() {
         setBookingModalVisible(true);
     };
 
-    const handleConfirmBooking = async () => {
-        setSubmitting(true);
-        try {
-            const serviceType = service?.categoryName || categoryName || service?.name?.split(' ')[0].toLowerCase() || 'plumber';
-            
-            const requestBody = {
-                type: serviceType,
-                platformServiceIds: [id],
-                coords: {
-                    lat: contextCoordinates?.latitude || 27.7172,
-                    lng: contextCoordinates?.longitude || 85.324,
-                },
-                address: contextAddress,
-                source: 'gps',
-            };
-            
-            const response = await makeAuthenticatedRequest(
-                `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/service-requests`,
-                {
-                    method: 'POST',
-                    body: JSON.stringify(requestBody),
-                }
-            );
+const handleConfirmBooking = async () => {
+    setSubmitting(true);
+    try {
+        // ✅ Get the service type from multiple sources
+        let serviceType = '';
 
-            const data = await response.json();
-
-            if (response.ok && data.success) {
-                setBookingModalVisible(false);
-                setBookingData({
-                    requestId: data.requestId || 'SR' + Date.now().toString().slice(-6),
-                    serviceName: service?.name || 'Service',
-                });
-                setSuccessModalVisible(true);
-            } else {
-                Alert.alert('Error', data.message || 'Failed to submit booking');
-            }
-        } catch (error: any) {
-            console.error('Error submitting booking:', error);
-            if (error.message !== 'Session expired') {
-                Alert.alert('Error', 'Network error. Please try again.');
-            }
-        } finally {
-            setSubmitting(false);
+        // Try to get from categoryName first
+        if (categoryName) {
+            serviceType = categoryName as string;
+        } 
+        // Then try from service.categoryName
+        else if (service?.categoryName) {
+            serviceType = service.categoryName;
         }
-    };
+        // Then try from service.name
+        else if (service?.name) {
+            serviceType = service.name;
+        }
+        // Fallback to the id param
+        else {
+            serviceType = id as string;
+        }
+
+        // ✅ Clean up the service type - remove "Service" suffix if present
+        serviceType = serviceType.replace(/\s*Service\s*/gi, '').trim();
+
+        // ✅ Map to valid service type
+        const serviceTypeMap: Record<string, string> = {
+            'plumber': 'plumber',
+            'Plumber': 'plumber',
+            'electrician': 'electrician',
+            'Electrician': 'electrician',
+            'painter': 'painter',
+            'Painter': 'painter',
+            'carpenter': 'carpenter',
+            'Carpenter': 'carpenter',
+            'cleaning': 'cleaning',
+            'Cleaning': 'cleaning',
+            'plumbing': 'plumber',
+            'Plumbing': 'plumber',
+            'electrical': 'electrician',
+            'Electrical': 'electrician',
+        };
+
+        // ✅ Get the mapped service type
+        const finalServiceType = serviceTypeMap[serviceType] || serviceType.toLowerCase() || 'plumber';
+        
+        console.log('📝 Booking Details:');
+        console.log('  Original serviceType:', serviceType);
+        console.log('  Final serviceType:', finalServiceType);
+        console.log('  Service name:', service?.name);
+        console.log('  Category name:', categoryName);
+        console.log('  Service ID:', id);
+
+        const requestBody = {
+            type: finalServiceType,
+            platformServiceIds: [id],
+            coords: {
+                lat: contextCoordinates?.latitude || 27.7172,
+                lng: contextCoordinates?.longitude || 85.324,
+            },
+            address: contextAddress,
+            source: 'gps',
+        };
+
+        console.log('📤 Request body:', JSON.stringify(requestBody, null, 2));
+
+        const response = await makeAuthenticatedRequest(
+            `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/service-requests`,
+            {
+                method: 'POST',
+                body: JSON.stringify(requestBody),
+            }
+        );
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            setBookingModalVisible(false);
+            setBookingData({
+                requestId: data.requestId || 'SR' + Date.now().toString().slice(-6),
+                serviceName: service?.name || 'Service',
+            });
+            setSuccessModalVisible(true);
+        } else {
+            console.error('❌ Booking error:', data);
+            Alert.alert('Error', data.message || 'Failed to submit booking');
+        }
+    } catch (error: any) {
+        console.error('❌ Error submitting booking:', error);
+        if (error.message !== 'Session expired') {
+            Alert.alert('Error', 'Network error. Please try again.');
+        }
+    } finally {
+        setSubmitting(false);
+    }
+};
 
     const handleSuccessAction = (action: 'home' | 'status') => {
         setSuccessModalVisible(false);
@@ -419,45 +472,40 @@ export default function ServiceDetailsScreen() {
         }
     };
 
-    if (loading) {
+    // ============================================
+    // RENDER FUNCTIONS
+    // ============================================
+
+    const renderServiceDetails = () => {
+        const data = service || {
+            id: id as string,
+            name: name as string,
+            description: description as string,
+            price: price as string,
+            imageUrl: imageUrl as string,
+        };
+
         return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={primaryColor} />
-                <Text style={styles.loadingText}>Loading service details...</Text>
-            </View>
-        );
-    }
-
-    const serviceData = service || {
-        id: id as string,
-        name: name as string,
-        description: description as string,
-        price: price as string,
-        imageUrl: imageUrl as string,
-    };
-
-    return (
-        <>
-            <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-                {/* Hero Layout */}
+            <>
+                {/* Hero Image */}
                 <View style={styles.imageContainer}>
-                    {serviceData.imageUrl ? (
-                        <Image source={{ uri: serviceData.imageUrl }} style={styles.heroImage} resizeMode="cover" />
+                    {data.imageUrl ? (
+                        <Image source={{ uri: data.imageUrl }} style={styles.heroImage} resizeMode="cover" />
                     ) : (
                         <LinearGradient colors={gradientColors} style={styles.heroImagePlaceholder}>
-                            <Text style={styles.heroInitials}>{getInitials(serviceData.name)}</Text>
+                            <Text style={styles.heroInitials}>{getInitials(data.name)}</Text>
                         </LinearGradient>
                     )}
                     <View style={[styles.priceBadge, { backgroundColor: primaryColor }]}>
                         <Text style={styles.priceBadgeText}>
-                            रु {parseFloat(serviceData.price || '0').toLocaleString()}
+                            रु {parseFloat(data.price || '0').toLocaleString()}
                         </Text>
                     </View>
                 </View>
 
-                {/* Profile Information Block */}
+                {/* Service Info */}
                 <View style={styles.infoContainer}>
-                    <Text style={styles.serviceName}>{serviceData.name}</Text>
+                    <Text style={styles.serviceName}>{data.name}</Text>
                     
                     <View style={styles.ratingContainer}>
                         <View style={styles.stars}>
@@ -468,10 +516,10 @@ export default function ServiceDetailsScreen() {
                         <Text style={styles.ratingText}>4.8 (1,234 reviews)</Text>
                     </View>
 
-                    {serviceData.description && (
+                    {data.description && (
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Description</Text>
-                            <Text style={styles.descriptionText}>{serviceData.description}</Text>
+                            <Text style={styles.descriptionText}>{data.description}</Text>
                         </View>
                     )}
 
@@ -479,25 +527,25 @@ export default function ServiceDetailsScreen() {
                         <Text style={styles.sectionTitle}>What's Included</Text>
                         <View style={styles.featuresList}>
                             <View style={styles.featureItem}>
-                                <MaterialIcons name="verified" size={20} color="#10b981" />
+                                <MaterialIcons name="verified" size={20} color={primaryColor} />
                                 <Text style={styles.featureText}>Professional & insured</Text>
                             </View>
                             <View style={styles.featureItem}>
-                                <MaterialIcons name="timer" size={20} color="#10b981" />
+                                <MaterialIcons name="timer" size={20} color={primaryColor} />
                                 <Text style={styles.featureText}>On-time arrival guaranteed</Text>
                             </View>
                             <View style={styles.featureItem}>
-                                <MaterialIcons name="security" size={20} color="#10b981" />
+                                <MaterialIcons name="security" size={20} color={primaryColor} />
                                 <Text style={styles.featureText}>Quality workmanship</Text>
                             </View>
                             <View style={styles.featureItem}>
-                                <MaterialIcons name="support-agent" size={20} color="#10b981" />
+                                <MaterialIcons name="support-agent" size={20} color={primaryColor} />
                                 <Text style={styles.featureText}>24/7 customer support</Text>
                             </View>
                         </View>
                     </View>
 
-                    {/* Customer Location Selector */}
+                    {/* Location */}
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>Service Location</Text>
                         <TouchableOpacity 
@@ -518,83 +566,114 @@ export default function ServiceDetailsScreen() {
                         </TouchableOpacity>
                     </View>
                 </View>
+            </>
+        );
+    };
 
-                {/* Sticky Action Footer */}
-                <View style={styles.footer}>
-                    <View style={styles.priceContainer}>
-                        <Text style={styles.priceLabel}>Price</Text>
-                        <Text style={[styles.priceAmount, { color: primaryColor }]}>रु {parseFloat(serviceData.price || '0').toLocaleString()}</Text>
-                    </View>
-                    <TouchableOpacity 
-                        style={[styles.bookButton, { backgroundColor: primaryColor }]} 
-                        onPress={handleBookNow} 
-                        disabled={isTokenRefreshing}
-                    >
-                        {isTokenRefreshing ? (
-                            <ActivityIndicator color="#fff" size="small" />
-                        ) : (
-                            <>
-                                <Text style={styles.bookButtonText}>Book Now</Text>
-                                <Ionicons name="arrow-forward" size={20} color="#fff" />
-                            </>
-                        )}
-                    </TouchableOpacity>
+    const renderFooter = () => {
+        const data = service || {
+            id: id as string,
+            name: name as string,
+            description: description as string,
+            price: price as string,
+            imageUrl: imageUrl as string,
+        };
+
+        return (
+            <View style={styles.footer}>
+                <View style={styles.priceContainer}>
+                    <Text style={styles.priceLabel}>Price</Text>
+                    <Text style={[styles.priceAmount, { color: primaryColor }]}>
+                        रु {parseFloat(data.price || '0').toLocaleString()}
+                    </Text>
                 </View>
+                <TouchableOpacity 
+                    style={[styles.bookButton, { backgroundColor: primaryColor }]} 
+                    onPress={handleBookNow} 
+                    disabled={isTokenRefreshing}
+                >
+                    {isTokenRefreshing ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                        <>
+                            <Text style={styles.bookButtonText}>Book Now</Text>
+                            <Ionicons name="arrow-forward" size={20} color="#fff" />
+                        </>
+                    )}
+                </TouchableOpacity>
+            </View>
+        );
+    };
 
-                {/* Booking Validation Dialog */}
-                <Modal visible={bookingModalVisible} animationType="slide" transparent={true} onRequestClose={() => setBookingModalVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <View style={styles.modalContent}>
-                            <View style={styles.modalHeader}>
-                                <Text style={styles.modalTitle}>Confirm Booking</Text>
-                                <TouchableOpacity onPress={() => setBookingModalVisible(false)}>
-                                    <Ionicons name="close" size={24} color="#64748b" />
-                                </TouchableOpacity>
+    const renderBookingModal = () => {
+        const data = service || {
+            id: id as string,
+            name: name as string,
+            description: description as string,
+            price: price as string,
+            imageUrl: imageUrl as string,
+        };
+
+        return (
+            <Modal visible={bookingModalVisible} animationType="slide" transparent={true} onRequestClose={() => setBookingModalVisible(false)}>
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Confirm Booking</Text>
+                            <TouchableOpacity onPress={() => setBookingModalVisible(false)}>
+                                <Ionicons name="close" size={24} color="#64748b" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.modalBody}>
+                            <View style={styles.serviceSummary}>
+                                <Text style={styles.summaryServiceName}>{data.name}</Text>
+                                <Text style={[styles.summaryPrice, { color: primaryColor }]}>
+                                    रु {parseFloat(data.price || '0').toLocaleString()}
+                                </Text>
                             </View>
 
-                            <View style={styles.modalBody}>
-                                <View style={styles.serviceSummary}>
-                                    <Text style={styles.summaryServiceName}>{serviceData.name}</Text>
-                                    <Text style={[styles.summaryPrice, { color: primaryColor }]}>रु {parseFloat(serviceData.price || '0').toLocaleString()}</Text>
-                                </View>
-
-                                <View style={[styles.locationSummary, { borderColor: primaryLight }]}>
-                                    <MaterialIcons name="location-on" size={20} color={primaryColor} />
-                                    <Text style={styles.locationSummaryText}>{contextAddress || 'Location not set'}</Text>
-                                </View>
-
-                                <View style={styles.priceBreakdown}>
-                                    <View style={styles.breakdownRow}>
-                                        <Text style={styles.breakdownLabel}>Service Charge</Text>
-                                        <Text style={styles.breakdownValue}>रु {parseFloat(serviceData.price || '0').toLocaleString()}</Text>
-                                    </View>
-                                    <View style={styles.breakdownDivider} />
-                                    <View style={styles.breakdownTotal}>
-                                        <Text style={styles.totalLabel}>Total Amount</Text>
-                                        <Text style={[styles.totalAmount, { color: primaryColor }]}>रु {parseFloat(serviceData.price || '0').toLocaleString()}</Text>
-                                    </View>
-                                    <Text style={styles.paymentNote}>Payment will be made directly to the professional after service completion</Text>
-                                </View>
+                            <View style={[styles.locationSummary, { borderColor: primaryLight }]}>
+                                <MaterialIcons name="location-on" size={20} color={primaryColor} />
+                                <Text style={styles.locationSummaryText}>{contextAddress || 'Location not set'}</Text>
                             </View>
 
-                            <View style={styles.modalFooter}>
-                                <TouchableOpacity style={styles.cancelButton} onPress={() => setBookingModalVisible(false)}>
-                                    <Text style={styles.cancelButtonText}>Cancel</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity 
-                                    style={[styles.confirmButton, { backgroundColor: primaryColor }]} 
-                                    onPress={handleConfirmBooking} 
-                                    disabled={submitting}
-                                >
-                                    {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmButtonText}>Confirm Booking</Text>}
-                                </TouchableOpacity>
+                            <View style={styles.priceBreakdown}>
+                                <View style={styles.breakdownRow}>
+                                    <Text style={styles.breakdownLabel}>Service Charge</Text>
+                                    <Text style={styles.breakdownValue}>रु {parseFloat(data.price || '0').toLocaleString()}</Text>
+                                </View>
+                                <View style={styles.breakdownDivider} />
+                                <View style={styles.breakdownTotal}>
+                                    <Text style={styles.totalLabel}>Total Amount</Text>
+                                    <Text style={[styles.totalAmount, { color: primaryColor }]}>
+                                        रु {parseFloat(data.price || '0').toLocaleString()}
+                                    </Text>
+                                </View>
+                                <Text style={styles.paymentNote}>Payment will be made directly to the professional after service completion</Text>
                             </View>
                         </View>
-                    </View>
-                </Modal>
-            </ScrollView>
 
-            {/* Core Location Configuration Engine */}
+                        <View style={styles.modalFooter}>
+                            <TouchableOpacity style={styles.cancelButton} onPress={() => setBookingModalVisible(false)}>
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.confirmButton, { backgroundColor: primaryColor }]} 
+                                onPress={handleConfirmBooking} 
+                                disabled={submitting}
+                            >
+                                {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmButtonText}>Confirm Booking</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+        );
+    };
+
+    const renderLocationModal = () => {
+        return (
             <Modal visible={showLocationModal} animationType="slide" transparent={false} onRequestClose={() => setShowLocationModal(false)}>
                 <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
                     <View style={styles.modalContainer}>
@@ -817,8 +896,11 @@ export default function ServiceDetailsScreen() {
                     </View>
                 </TouchableWithoutFeedback>
             </Modal>
+        );
+    };
 
-            {/* Success Modal - UPI Style */}
+    const renderSuccessModal = () => {
+        return (
             <Modal
                 visible={successModalVisible}
                 transparent={true}
@@ -834,7 +916,7 @@ export default function ServiceDetailsScreen() {
                                 opacity: scaleAnim,
                             }
                         ]}>
-                            {/* Success Icon with Checkmark */}
+                            {/* Success Icon */}
                             <View style={styles.successIconContainer}>
                                 <LinearGradient
                                     colors={['#10b981', '#059669']}
@@ -887,9 +969,9 @@ export default function ServiceDetailsScreen() {
                                 <View style={styles.detailDivider} />
                                 <View style={styles.detailRow}>
                                     <Text style={styles.detailLabel}>Status</Text>
-                                    <View style={styles.statusBadge}>
-                                        <View style={styles.statusDot} />
-                                        <Text style={styles.statusText}>Pending Approval</Text>
+                                    <View style={[styles.statusBadge, { backgroundColor: primaryLight }]}>
+                                        <View style={[styles.statusDot, { backgroundColor: primaryColor }]} />
+                                        <Text style={[styles.statusText, { color: primaryColor }]}>Pending Approval</Text>
                                     </View>
                                 </View>
                             </Animated.View>
@@ -921,6 +1003,29 @@ export default function ServiceDetailsScreen() {
                     </TouchableWithoutFeedback>
                 </View>
             </Modal>
+        );
+    };
+
+    if (loading) {
+        return (
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={primaryColor} />
+                <Text style={styles.loadingText}>Loading service details...</Text>
+            </View>
+        );
+    }
+
+    return (
+        <>
+            <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+                {renderServiceDetails()}
+                <View style={styles.footerSpacer} />
+            </ScrollView>
+            
+            {renderFooter()}
+            {renderBookingModal()}
+            {renderLocationModal()}
+            {renderSuccessModal()}
         </>
     );
 }
@@ -940,6 +1045,9 @@ const styles = StyleSheet.create({
         marginTop: 12,
         fontSize: 14,
         color: '#64748b',
+    },
+    footerSpacer: {
+        height: 100,
     },
     imageContainer: {
         position: 'relative',
@@ -1042,7 +1150,6 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: '#fef3e8',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -1060,6 +1167,10 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
     footer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -1067,7 +1178,11 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderTopWidth: 1,
         borderTopColor: '#f0f2f5',
-        marginTop: 20,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 4,
     },
     priceContainer: {
         flex: 1,
@@ -1079,16 +1194,19 @@ const styles = StyleSheet.create({
     priceAmount: {
         fontSize: 24,
         fontWeight: '700',
-        color: '#e67e22',
     },
     bookButton: {
-        backgroundColor: '#e67e22',
         paddingHorizontal: 24,
         paddingVertical: 14,
         borderRadius: 30,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
     },
     bookButtonText: {
         color: '#fff',
@@ -1104,6 +1222,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
+        maxHeight: '90%',
     },
     modalHeader: {
         flexDirection: 'row',
@@ -1144,7 +1263,6 @@ const styles = StyleSheet.create({
     summaryPrice: {
         fontSize: 20,
         fontWeight: '700',
-        color: '#e67e22',
     },
     locationSummary: {
         flexDirection: 'row',
@@ -1197,7 +1315,6 @@ const styles = StyleSheet.create({
     totalAmount: {
         fontSize: 20,
         fontWeight: '700',
-        color: '#e67e22',
     },
     paymentNote: {
         fontSize: 12,
@@ -1222,12 +1339,14 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         borderRadius: 12,
         alignItems: 'center',
-        backgroundColor: '#e67e22',
     },
     confirmButtonText: {
         fontSize: 16,
         fontWeight: '600',
         color: '#fff',
+    },
+    confirmButtonDisabled: {
+        backgroundColor: '#cbd5e1',
     },
     modalContainer: {
         flex: 1,
@@ -1296,7 +1415,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        backgroundColor: '#e67e22',
         paddingHorizontal: 24,
         paddingVertical: 12,
         borderRadius: 30,
@@ -1349,7 +1467,6 @@ const styles = StyleSheet.create({
         shadowRadius: 4,
         elevation: 3,
         borderWidth: 1,
-        borderColor: '#e67e22',
     },
     manualLocationContainer: {
         flex: 1,
@@ -1484,7 +1601,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 8,
-        backgroundColor: '#e67e22',
         paddingVertical: 14,
         borderRadius: 12,
     },
@@ -1493,10 +1609,6 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
     },
-    confirmButtonDisabled: {
-        backgroundColor: '#cbd5e1',
-    },
-    // Success Modal Styles - UPI Style
     successOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.6)',
@@ -1582,7 +1694,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: '#fef3c7',
         paddingHorizontal: 12,
         paddingVertical: 4,
         borderRadius: 12,
@@ -1591,12 +1702,10 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: '#f59e0b',
     },
     statusText: {
         fontSize: 12,
         fontWeight: '600',
-        color: '#92400e',
     },
     successActions: {
         width: '100%',
@@ -1611,7 +1720,11 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     successButtonPrimary: {
-        backgroundColor: '#0177b8',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
     },
     successButtonSecondary: {
         backgroundColor: '#f1f5f9',

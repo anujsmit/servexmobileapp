@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+// app/(protected)/(mistri)/earnings.tsx
+import React, { useState, useMemo, useCallback } from 'react';
 import {
     View,
     Text,
@@ -13,12 +14,13 @@ import {
     mistriDashboardColors as DC,
     mistriDashboardElevation as MISTRI_ELEV,
 } from '../../../lib/mistriDashboardTokens';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEarningsQuery } from '../../../hooks/queries';
 import { LineChart } from 'react-native-chart-kit';
 import { SafeAreaContainer } from '../../../components/SafeAreaContainer';
 import { useMistriTradeTheme } from '../../../context/MistriTradeThemeContext';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -35,14 +37,14 @@ export default function EarningsPage() {
         { id: 'week', label: 'Week' },
         { id: 'month', label: 'Month' },
         { id: 'year', label: 'Year' },
-        { id: 'all', label: 'All Time' },
+        { id: 'all', label: 'All' },
     ];
 
     const formatCurrency = (amount: number) => {
-        return `Rs. ${amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+        return `रु ${amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
     };
 
-    const formatDate = (dateString: string) => {
+    const formatShortDate = (dateString: string) => {
         const date = new Date(dateString);
         return date.toLocaleDateString('en-US', {
             month: 'short',
@@ -65,7 +67,7 @@ export default function EarningsPage() {
         }
         const trendData = data.trend.slice(-7);
         return {
-            labels: trendData.map(t => formatDate(t.date)),
+            labels: trendData.map(t => formatShortDate(t.date)),
             datasets: [{
                 data: trendData.map(t => t.amount),
                 color: (opacity = 1) => `rgba(${trade.accentRgb}, ${opacity})`,
@@ -81,38 +83,67 @@ export default function EarningsPage() {
             backgroundGradientTo: '#ffffff',
             decimalPlaces: 0,
             color: (opacity = 1) => `rgba(${trade.accentRgb}, ${opacity})`,
-            labelColor: (opacity = 1) => `rgba(113, 113, 122, ${opacity})`,
+            labelColor: (opacity = 1) => `rgba(100, 116, 139, ${opacity})`,
             style: {
                 borderRadius: 16,
             },
             propsForDots: {
-                r: '4',
+                r: '5',
                 strokeWidth: '2',
                 stroke: trade.accent,
             },
             propsForBackgroundLines: {
                 strokeDasharray: '',
-                stroke: 'rgba(15, 23, 42, 0.08)',
+                stroke: 'rgba(15, 23, 42, 0.06)',
                 strokeWidth: 1,
             },
         }),
         [trade.accent, trade.accentRgb]
     );
 
+    const getPeriodLabel = () => {
+        switch (selectedPeriod) {
+            case 'week': return 'This Week';
+            case 'month': return 'This Month';
+            case 'year': return 'This Year';
+            case 'all': return 'All Time';
+        }
+    };
+
+    const handleBack = useCallback(() => {
+        router.back();
+    }, [router]);
+
+    if (isLoading) {
+        return (
+            <SafeAreaContainer style={styles.container}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={trade.accent} />
+                    <Text style={styles.loadingText}>Loading earnings data...</Text>
+                </View>
+            </SafeAreaContainer>
+        );
+    }
+
     return (
         <SafeAreaContainer style={styles.container}>
             {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity
-                    onPress={() => router.back()}
-                    style={styles.backButton}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                    <MaterialIcons name="arrow-back" size={24} color={DC.text} />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Earnings</Text>
-                <View style={styles.headerRight} />
-            </View>
+            <LinearGradient
+                colors={['#ffffff', '#f8fafc']}
+                style={styles.header}
+            >
+                <View style={styles.headerContent}>
+                    <TouchableOpacity
+                        onPress={handleBack}
+                        style={styles.backButton}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        <Ionicons name="arrow-back" size={24} color={DC.text} />
+                    </TouchableOpacity>
+                    <Text style={styles.headerTitle}>Earnings</Text>
+                    <View style={styles.headerRight} />
+                </View>
+            </LinearGradient>
 
             <ScrollView
                 style={styles.content}
@@ -153,12 +184,7 @@ export default function EarningsPage() {
                     ))}
                 </View>
 
-                {isLoading ? (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={trade.accent} />
-                        <Text style={styles.loadingText}>Loading earnings data...</Text>
-                    </View>
-                ) : !data ? (
+                {!data ? (
                     <View style={styles.emptyState}>
                         <MaterialIcons name="account-balance-wallet" size={48} color={DC.muted} />
                         <Text style={styles.emptyStateText}>No earnings data available</Text>
@@ -167,68 +193,66 @@ export default function EarningsPage() {
                     <>
                         {/* Total Earnings Hero Card */}
                         <View style={styles.heroCard}>
-                            <View style={[styles.heroIconCircle, { backgroundColor: trade.accentSoft }]}>
-                                <MaterialIcons name="account-balance-wallet" size={32} color={trade.accent} />
-                            </View>
-                            <Text style={[styles.heroAmount, { color: trade.accent }]}>
-                                {formatCurrency(data.summary.totalEarnings)}
-                            </Text>
-                            <Text style={styles.heroLabel}>Total Earnings</Text>
-                            <Text style={styles.heroPeriod}>
-                                {selectedPeriod === 'week' && 'This Week'}
-                                {selectedPeriod === 'month' && 'This Month'}
-                                {selectedPeriod === 'year' && 'This Year'}
-                                {selectedPeriod === 'all' && 'All Time'}
-                            </Text>
+                            <LinearGradient
+                                colors={[trade.accent + '15', trade.accent + '05']}
+                                style={styles.heroGradient}
+                            >
+                                <View style={[styles.heroIconCircle, { backgroundColor: trade.accent }]}>
+                                    <MaterialIcons name="account-balance-wallet" size={28} color="#ffffff" />
+                                </View>
+                                <Text style={styles.heroLabel}>Total Earnings</Text>
+                                <Text style={[styles.heroAmount, { color: trade.accent }]}>
+                                    {formatCurrency(data.summary.totalEarnings)}
+                                </Text>
+                                <Text style={styles.heroPeriod}>{getPeriodLabel()}</Text>
+                            </LinearGradient>
                         </View>
 
                         {/* Stats Row */}
                         <View style={styles.statsRow}>
-                            <View style={[styles.statCard, { backgroundColor: '#d1fae5' }]}>
-                                <View style={[styles.statIcon, { backgroundColor: '#059669' }]}>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIcon, { backgroundColor: '#10b981', opacity: 0.9 }]}>
                                     <MaterialIcons name="check-circle" size={20} color="#ffffff" />
                                 </View>
-                                <Text style={[styles.statValue, { color: '#059669' }]}>
-                                    {formatCurrency(data.summary.paidEarnings)}
-                                </Text>
+                                <Text style={styles.statValue}>{formatCurrency(data.summary.paidEarnings)}</Text>
                                 <Text style={styles.statLabel}>Paid</Text>
                                 <Text style={styles.statSubtext}>{data.summary.paidJobs} jobs</Text>
                             </View>
 
-                            <View style={[styles.statCard, { backgroundColor: '#fed7aa' }]}>
-                                <View style={[styles.statIcon, { backgroundColor: '#d97706' }]}>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIcon, { backgroundColor: '#f59e0b', opacity: 0.9 }]}>
                                     <MaterialIcons name="pending" size={20} color="#ffffff" />
                                 </View>
-                                <Text style={[styles.statValue, { color: '#d97706' }]}>
-                                    {formatCurrency(data.summary.unpaidEarnings)}
-                                </Text>
+                                <Text style={styles.statValue}>{formatCurrency(data.summary.unpaidEarnings)}</Text>
                                 <Text style={styles.statLabel}>Pending</Text>
                                 <Text style={styles.statSubtext}>{data.summary.unpaidJobs} jobs</Text>
                             </View>
 
-                            <View style={[styles.statCard, { backgroundColor: trade.accentSoft }]}>
-                                <View style={[styles.statIcon, { backgroundColor: trade.accent }]}>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIcon, { backgroundColor: trade.accent, opacity: 0.9 }]}>
                                     <MaterialIcons name="assignment" size={20} color="#ffffff" />
                                 </View>
-                                <Text style={[styles.statValue, { color: trade.accent }]}>
-                                    {data.summary.totalJobs}
-                                </Text>
+                                <Text style={styles.statValue}>{data.summary.totalJobs}</Text>
                                 <Text style={styles.statLabel}>Total Jobs</Text>
-                                <Text style={styles.statSubtext}>
-                                    {formatCurrency(data.summary.averagePerJob)} avg
-                                </Text>
+                                <Text style={styles.statSubtext}>{formatCurrency(data.summary.averagePerJob)} avg</Text>
                             </View>
                         </View>
 
                         {/* Earnings Trend Chart */}
                         {chartData && chartData.datasets[0].data.length > 0 && (
                             <View style={styles.chartSection}>
-                                <Text style={styles.sectionTitle}>Earnings Trend</Text>
+                                <View style={styles.sectionHeader}>
+                                    <Text style={styles.sectionTitle}>Earnings Trend</Text>
+                                    <View style={[styles.trendBadge, { backgroundColor: trade.accent + '10' }]}>
+                                        <MaterialIcons name="trending-up" size={14} color={trade.accent} />
+                                        <Text style={[styles.trendText, { color: trade.accent }]}>Last 7 days</Text>
+                                    </View>
+                                </View>
                                 <View style={styles.chartCard}>
                                     <LineChart
                                         data={chartData}
-                                        width={SCREEN_WIDTH - 56}
-                                        height={200}
+                                        width={SCREEN_WIDTH - 48}
+                                        height={220}
                                         chartConfig={lineChartConfig}
                                         bezier
                                         style={styles.chart}
@@ -239,6 +263,7 @@ export default function EarningsPage() {
                                         withVerticalLines={false}
                                         withHorizontalLines={true}
                                         fromZero
+                                        formatYLabel={(value) => `रु ${parseInt(value).toLocaleString()}`}
                                     />
                                 </View>
                             </View>
@@ -249,15 +274,18 @@ export default function EarningsPage() {
                             <Text style={styles.sectionTitle}>Recent Transactions</Text>
                             {data.jobs.length === 0 ? (
                                 <View style={styles.emptyTransactions}>
-                                    <MaterialIcons name="receipt-long" size={40} color="#9ca3af" />
+                                    <MaterialIcons name="receipt-long" size={40} color={DC.muted} />
                                     <Text style={styles.emptyTransactionsText}>No transactions yet</Text>
                                 </View>
                             ) : (
                                 <View style={styles.transactionsList}>
-                                    {data.jobs.map((job) => (
+                                    {data.jobs.slice(0, 10).map((job, index) => (
                                         <TouchableOpacity
                                             key={job.id}
-                                            style={styles.transactionCard}
+                                            style={[
+                                                styles.transactionCard,
+                                                index === data.jobs.length - 1 && styles.transactionCardLast
+                                            ]}
                                             onPress={() => router.push({
                                                 pathname: '/(protected)/(mistri)/job-details',
                                                 params: { requestId: job.id }
@@ -265,7 +293,7 @@ export default function EarningsPage() {
                                             activeOpacity={0.7}
                                         >
                                             <View style={styles.transactionLeft}>
-                                                <View style={[styles.transactionIcon, { backgroundColor: trade.accentSoft }]}>
+                                                <View style={[styles.transactionIcon, { backgroundColor: trade.accent + '15' }]}>
                                                     <MaterialIcons name="build" size={20} color={trade.accent} />
                                                 </View>
                                                 <View style={styles.transactionInfo}>
@@ -273,17 +301,11 @@ export default function EarningsPage() {
                                                         {job.type.charAt(0).toUpperCase() + job.type.slice(1)}
                                                     </Text>
                                                     <Text style={styles.transactionCustomer}>
-                                                        for {job.customerName}
+                                                        {job.customerName}
                                                     </Text>
-                                                    <View style={styles.transactionMeta}>
-                                                        <Text style={styles.transactionDate}>
-                                                            {formatDateLong(job.completedAt)}
-                                                        </Text>
-                                                        <Text style={styles.transactionSeparator}>•</Text>
-                                                        <Text style={styles.transactionServices}>
-                                                            {job.services.length} service{job.services.length !== 1 ? 's' : ''}
-                                                        </Text>
-                                                    </View>
+                                                    <Text style={styles.transactionDate}>
+                                                        {formatDateLong(job.completedAt)}
+                                                    </Text>
                                                 </View>
                                             </View>
                                             <View style={styles.transactionRight}>
@@ -317,6 +339,7 @@ export default function EarningsPage() {
                         </View>
                     </>
                 )}
+                <View style={{ height: 20 }} />
             </ScrollView>
         </SafeAreaContainer>
     );
@@ -325,28 +348,31 @@ export default function EarningsPage() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: DC.surface,
+        backgroundColor: DC.canvas,
     },
     header: {
+        paddingTop: 12,
+        paddingBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(15, 23, 42, 0.06)',
+    },
+    headerContent: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 16,
-        paddingVertical: 12,
-        backgroundColor: DC.surface,
-        borderBottomWidth: 0,
-        boxShadow: MISTRI_ELEV.header,
     },
     backButton: {
         width: 40,
         height: 40,
         alignItems: 'center',
         justifyContent: 'center',
+        borderRadius: 20,
     },
     headerTitle: {
-        fontSize: 21,
+        fontSize: 20,
         fontWeight: '700',
-        letterSpacing: -0.45,
+        letterSpacing: -0.4,
         color: DC.text,
     },
     headerRight: {
@@ -354,29 +380,35 @@ const styles = StyleSheet.create({
     },
     content: {
         flex: 1,
-        backgroundColor: DC.canvas,
     },
     periodSelector: {
         flexDirection: 'row',
         gap: 8,
         paddingHorizontal: 16,
-        paddingTop: 14,
-        paddingBottom: 14,
+        paddingTop: 20,
+        paddingBottom: 16,
     },
     periodButton: {
         flex: 1,
         paddingVertical: 10,
-        paddingHorizontal: 12,
         borderRadius: 12,
-        borderCurve: 'continuous',
-        backgroundColor: DC.surface,
+        backgroundColor: '#ffffff',
         borderWidth: 1,
-        borderColor: 'rgba(15, 23, 42, 0.06)',
+        borderColor: '#e2e8f0',
         alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.03,
+        shadowRadius: 2,
+        elevation: 1,
     },
-    periodButtonActive: {},
+    periodButtonActive: {
+        borderWidth: 0,
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
     periodButtonText: {
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: '600',
         color: DC.muted,
     },
@@ -384,6 +416,7 @@ const styles = StyleSheet.create({
         color: '#ffffff',
     },
     loadingContainer: {
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 60,
@@ -394,52 +427,58 @@ const styles = StyleSheet.create({
         marginTop: 12,
     },
     emptyState: {
-        backgroundColor: DC.surface,
+        backgroundColor: '#ffffff',
         padding: 40,
         marginHorizontal: 16,
-        marginTop: 14,
-        borderRadius: 16,
-        borderCurve: 'continuous',
+        marginTop: 20,
+        borderRadius: 20,
         alignItems: 'center',
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
     },
     emptyStateText: {
         fontSize: 14,
-        fontWeight: '600',
+        fontWeight: '500',
         color: DC.muted,
         marginTop: 12,
     },
     heroCard: {
-        backgroundColor: DC.surface,
         marginHorizontal: 16,
-        marginBottom: 14,
+        marginBottom: 20,
+        borderRadius: 20,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 4,
+    },
+    heroGradient: {
         padding: 24,
-        borderRadius: 16,
-        borderCurve: 'continuous',
         alignItems: 'center',
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
-        elevation: 2,
     },
     heroIconCircle: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 16,
+        marginBottom: 12,
+    },
+    heroLabel: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: DC.muted,
+        marginBottom: 4,
     },
     heroAmount: {
         fontSize: 36,
         fontWeight: '800',
         marginBottom: 4,
-    },
-    heroLabel: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: DC.muted,
-        marginBottom: 4,
+        letterSpacing: -0.8,
     },
     heroPeriod: {
         fontSize: 12,
@@ -447,18 +486,21 @@ const styles = StyleSheet.create({
     },
     statsRow: {
         flexDirection: 'row',
-        gap: 10,
+        gap: 12,
         paddingHorizontal: 16,
-        marginBottom: 20,
+        marginBottom: 24,
     },
     statCard: {
         flex: 1,
+        backgroundColor: '#ffffff',
         padding: 14,
         borderRadius: 16,
-        borderCurve: 'continuous',
         alignItems: 'center',
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 6,
+        elevation: 2,
     },
     statIcon: {
         width: 36,
@@ -466,12 +508,13 @@ const styles = StyleSheet.create({
         borderRadius: 18,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 8,
+        marginBottom: 10,
     },
     statValue: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: '800',
         marginBottom: 2,
+        letterSpacing: -0.3,
     },
     statLabel: {
         fontSize: 11,
@@ -485,39 +528,61 @@ const styles = StyleSheet.create({
     },
     chartSection: {
         paddingHorizontal: 16,
-        marginBottom: 20,
+        marginBottom: 24,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
     },
     sectionTitle: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: '700',
         letterSpacing: -0.3,
         color: DC.text,
-        marginBottom: 10,
+    },
+    trendBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+    },
+    trendText: {
+        fontSize: 11,
+        fontWeight: '600',
     },
     chartCard: {
-        backgroundColor: DC.surface,
-        borderRadius: 16,
-        borderCurve: 'continuous',
-        padding: 12,
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
+        backgroundColor: '#ffffff',
+        borderRadius: 20,
+        padding: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
         alignItems: 'center',
     },
     chart: {
         borderRadius: 16,
+        marginLeft: -20,
     },
     transactionsSection: {
         paddingHorizontal: 16,
         paddingBottom: 24,
     },
     emptyTransactions: {
-        backgroundColor: DC.surface,
-        padding: 32,
-        borderRadius: 16,
-        borderCurve: 'continuous',
+        backgroundColor: '#ffffff',
+        padding: 40,
+        borderRadius: 20,
         alignItems: 'center',
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
     },
     emptyTransactionsText: {
         fontSize: 14,
@@ -525,18 +590,24 @@ const styles = StyleSheet.create({
         marginTop: 8,
     },
     transactionsList: {
-        gap: 10,
+        gap: 12,
     },
     transactionCard: {
-        backgroundColor: DC.surface,
+        backgroundColor: '#ffffff',
         borderRadius: 16,
-        borderCurve: 'continuous',
         padding: 14,
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        elevation: 1,
+        marginBottom: 12,
+    },
+    transactionCardLast: {
+        marginBottom: 0,
     },
     transactionLeft: {
         flexDirection: 'row',
@@ -546,8 +617,7 @@ const styles = StyleSheet.create({
     transactionIcon: {
         width: 44,
         height: 44,
-        borderRadius: 13,
-        borderCurve: 'continuous',
+        borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: 12,
@@ -564,24 +634,11 @@ const styles = StyleSheet.create({
     transactionCustomer: {
         fontSize: 12,
         color: DC.muted,
-        marginBottom: 4,
-    },
-    transactionMeta: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        marginBottom: 2,
     },
     transactionDate: {
-        fontSize: 12,
-        color: DC.muted,
-    },
-    transactionSeparator: {
-        fontSize: 12,
-        color: DC.muted,
-        marginHorizontal: 6,
-    },
-    transactionServices: {
-        fontSize: 12,
-        color: DC.muted,
+        fontSize: 11,
+        color: '#94a3b8',
     },
     transactionRight: {
         alignItems: 'flex-end',
@@ -592,11 +649,12 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: DC.text,
         marginBottom: 6,
+        letterSpacing: -0.3,
     },
     transactionStatus: {
-        paddingHorizontal: 8,
+        paddingHorizontal: 10,
         paddingVertical: 4,
-        borderRadius: 8,
+        borderRadius: 12,
     },
     transactionStatusPaid: {
         backgroundColor: '#d1fae5',

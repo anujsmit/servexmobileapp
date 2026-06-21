@@ -43,13 +43,16 @@ const GOVT_ID_TYPES = [
 export default function MistriOnboardingProfile() {
     const router = useRouter();
     const { user, token, getMe, logout } = useAuth();
-    const { services } = useServices();
+    const { services, loading: servicesLoading } = useServices();
 
     const [fullName, setFullName] = useState(user?.fullName || '');
     const [fullNameError, setFullNameError] = useState('');
     const [imageUri, setImageUri] = useState<string | null>(null);
     const [imageBase64, setImageBase64] = useState<string | null>(null);
-    const [serviceId, setServiceId] = useState<number | null>(null);
+    
+    // Multiple services selection
+    const [selectedServiceIds, setSelectedServiceIds] = useState<number[]>([]);
+    
     const [bio, setBio] = useState('');
     const [experienceLevel, setExperienceLevel] = useState<string | null>(null);
     const [markerPosition, setMarkerPosition] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -66,40 +69,78 @@ export default function MistriOnboardingProfile() {
     const [uploading, setUploading] = useState(false);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-    const SERVICE_OPTIONS: { id: number; name: string; icon: IoniconName; color: string }[] = services.map(service => {
-        const icon: IoniconName = service.serviceName.toLowerCase().includes('plumb') ? 'hammer-outline' :
-            service.serviceName.toLowerCase() === 'electrician' ? 'flash-outline' :
-                'construct-outline';
+    // Map services from backend with icons
+    const SERVICE_OPTIONS = services.map(service => {
+        let icon: IoniconName = 'construct-outline';
+        const serviceNameLower = service.serviceName.toLowerCase();
+        
+        if (serviceNameLower.includes('plumb')) icon = 'hammer-outline';
+        else if (serviceNameLower === 'electrician') icon = 'flash-outline';
+        else if (serviceNameLower === 'painter') icon = 'brush-outline';
+        else if (serviceNameLower === 'cleaning') icon = 'sparkles-outline';
+        else if (serviceNameLower === 'carpenter') icon = 'construct-outline';
+        else if (serviceNameLower === 'ac_repair') icon = 'snow-outline';
+        else if (serviceNameLower === 'mechanic') icon = 'car-outline';
+        
+        const displayName = service.serviceName.charAt(0).toUpperCase() + service.serviceName.slice(1);
+        
         return {
             id: service.id,
             name: service.serviceName.toLowerCase(),
+            displayName: displayName,
             icon,
-            color: service.color || '#6b7280',
+            color: service.iconColor || '#6b7280',
+            isActive: service.isActive,
         };
-    });
+    }).filter(service => service.isActive !== false);
 
-    const currentServiceColor = () =>
-        SERVICE_OPTIONS.find(s => s.id === serviceId)?.color || ACCENT;
+    // Get primary service color
+    const currentServiceColor = () => {
+        if (selectedServiceIds.length > 0) {
+            const primaryService = SERVICE_OPTIONS.find(s => s.id === selectedServiceIds[0]);
+            return primaryService?.color || ACCENT;
+        }
+        return ACCENT;
+    };
+
+    const toggleServiceSelection = (serviceId: number) => {
+        setSelectedServiceIds(prev => 
+            prev.includes(serviceId) 
+                ? prev.filter(id => id !== serviceId)
+                : [...prev, serviceId]
+        );
+    };
+
+    const selectAllServices = () => {
+        setSelectedServiceIds(SERVICE_OPTIONS.map(service => service.id));
+    };
+
+    const clearAllServices = () => {
+        setSelectedServiceIds([]);
+    };
 
     useEffect(() => {
         (async () => {
             if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                const { status } = await ImagePicker.requestCameraPermissionsAsync();
                 if (status !== 'granted') {
-                    Alert.alert('Permission required', 'Permission to access photos is needed!');
+                    Alert.alert(
+                        'Camera Permission Required',
+                        'Camera access is needed to take your profile picture and capture ID documents in real-time for verification.'
+                    );
                 }
             }
         })();
     }, []);
 
-    const pickImage = async (setter: (uri: string) => void, base64Setter: (b64: string) => void) => {
+    const takePhoto = async (setter: (uri: string) => void, base64Setter: (b64: string) => void) => {
         try {
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            const result = await ImagePicker.launchCameraAsync({
                 allowsEditing: true,
                 quality: 0.7,
                 base64: false,
             });
+
             if (!result.canceled && result.assets.length > 0) {
                 const asset = result.assets[0];
                 const manipulated = await ImageManipulator.manipulateAsync(
@@ -112,6 +153,7 @@ export default function MistriOnboardingProfile() {
             }
         } catch (error) {
             if (__DEV__) console.error(error);
+            Alert.alert('Error', 'Failed to capture photo. Please try again.');
         }
     };
 
@@ -130,7 +172,7 @@ export default function MistriOnboardingProfile() {
     const isFormValid =
         fullName.trim() &&
         imageUri && imageBase64 &&
-        serviceId &&
+        selectedServiceIds.length > 0 &&
         bio.trim() &&
         experienceLevel &&
         markerPosition && location &&
@@ -144,34 +186,68 @@ export default function MistriOnboardingProfile() {
             return;
         }
         setUploading(true);
+
         try {
-            const response = await fetch(`${API_URL}/api/auth/mistri/profile`, {
+            let locationString = location;
+            if (markerPosition) {
+                locationString = `${markerPosition.latitude},${markerPosition.longitude}`;
+            }
+
+            const requestBody = {
+                serviceId: selectedServiceIds[0],
+                serviceIds: selectedServiceIds,
+                profilePhotoBase64: imageBase64,
+                currentLocation: locationString,
+                fullName: fullName.trim(),
+                bio: bio.trim(),
+                experienceLevel: experienceLevel,
+                govtIdType: govtIdType,
+                govtIdFrontBase64: idFrontBase64,
+                govtIdBackBase64: idBackBase64,
+            };
+
+            console.log('Sending request to:', `${API_URL}/api/mistri/profile`);
+            console.log('Selected services:', selectedServiceIds);
+            console.log('Request body:', JSON.stringify(requestBody, null, 2));
+
+            const response = await fetch(`${API_URL}/api/mistri/profile`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
+                    'Authorization': `Bearer ${token}`,
                 },
-                body: JSON.stringify({
-                    serviceId,
-                    profilePhotoBase64: imageBase64,
-                    currentLocation: location,
-                    fullName,
-                    bio,
-                    experienceLevel,
-                    govtIdType,
-                    govtIdFrontBase64: idFrontBase64,
-                    govtIdBackBase64: idBackBase64,
-                }),
+                body: JSON.stringify(requestBody),
             });
+
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to create profile');
+                const textResponse = await response.text();
+                console.error('Server error response:', textResponse);
+
+                try {
+                    const errorData = JSON.parse(textResponse);
+                    throw new Error(errorData.message || `Server error: ${response.status}`);
+                } catch (parseError) {
+                    throw new Error(`Server error (${response.status}). Please check your connection and try again.`);
+                }
             }
+
+            const data = await response.json();
+            console.log('Success response:', data);
+
             await getMe();
             router.replace(ROUTES.PENDING_APPROVAL as any);
-        } catch (error) {
-            if (__DEV__) console.error('Onboarding error', error);
-            Alert.alert('Error', 'Failed to complete onboarding. Please try again.');
+        } catch (error: any) {
+            if (__DEV__) {
+                console.error('Onboarding error details:', {
+                    message: error.message,
+                    stack: error.stack,
+                });
+            }
+
+            Alert.alert(
+                'Error',
+                error.message || 'Failed to complete onboarding. Please try again.'
+            );
         } finally {
             setUploading(false);
         }
@@ -180,24 +256,43 @@ export default function MistriOnboardingProfile() {
     const renderIdPicker = (
         label: string,
         uri: string | null,
-        onPick: () => void
+        onTakePhoto: () => void
     ) => (
-        <TouchableOpacity style={styles.idPickerButton} onPress={onPick} activeOpacity={0.8}>
+        <TouchableOpacity style={styles.idPickerButton} onPress={onTakePhoto} activeOpacity={0.8}>
             {uri ? (
-                <Image source={{ uri }} style={styles.idThumbnail} />
+                <>
+                    <Image source={{ uri }} style={styles.idThumbnail} />
+                    <View style={styles.idPickerOverlay}>
+                        <Ionicons name="checkmark-circle" size={22} color="#22c55e" />
+                    </View>
+                    <TouchableOpacity
+                        style={styles.retakeButton}
+                        onPress={onTakePhoto}
+                    >
+                        <Ionicons name="camera-reverse" size={16} color="white" />
+                        <Text style={styles.retakeText}>Retake</Text>
+                    </TouchableOpacity>
+                </>
             ) : (
                 <View style={styles.idPickerPlaceholder}>
-                    <Ionicons name="camera-outline" size={24} color="#6b7280" />
+                    <Ionicons name="camera-outline" size={32} color="#6b7280" />
                     <Text style={styles.idPickerLabel}>{label}</Text>
-                </View>
-            )}
-            {uri && (
-                <View style={styles.idPickerOverlay}>
-                    <Ionicons name="checkmark-circle" size={22} color="#22c55e" />
+                    <Text style={styles.idPickerSubLabel}>Take Photo</Text>
                 </View>
             )}
         </TouchableOpacity>
     );
+
+    if (servicesLoading) {
+        return (
+            <SafeAreaView style={styles.safeArea}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={ACCENT} />
+                    <Text style={styles.loadingText}>Loading services...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.safeArea}>
@@ -210,13 +305,25 @@ export default function MistriOnboardingProfile() {
 
                 {/* Profile Photo */}
                 <View style={styles.section}>
-                    <TouchableOpacity style={styles.avatarPlaceholder} onPress={() => pickImage(setImageUri, (b) => setImageBase64(b))} activeOpacity={0.8}>
+                    <Text style={styles.inputLabel}>Profile Photo <Text style={styles.required}>*</Text></Text>
+                    <Text style={styles.helperText}>Take a live photo for your profile</Text>
+                    <TouchableOpacity
+                        style={styles.avatarPlaceholder}
+                        onPress={() => takePhoto(setImageUri, (b) => setImageBase64(b))}
+                        activeOpacity={0.8}
+                    >
                         {imageUri ? (
-                            <Image source={{ uri: imageUri }} style={styles.avatar} />
+                            <>
+                                <Image source={{ uri: imageUri }} style={styles.avatar} />
+                                <View style={styles.cameraOverlay}>
+                                    <Ionicons name="camera-reverse" size={20} color="white" />
+                                    <Text style={styles.retakeText}>Retake</Text>
+                                </View>
+                            </>
                         ) : (
                             <View style={styles.avatarEmpty}>
-                                <Ionicons name="camera" size={28} color="#9ca3af" />
-                                <Text style={styles.avatarEmptyText}>Add Photo</Text>
+                                <Ionicons name="camera" size={32} color="#9ca3af" />
+                                <Text style={styles.avatarEmptyText}>Take Photo</Text>
                             </View>
                         )}
                     </TouchableOpacity>
@@ -238,26 +345,84 @@ export default function MistriOnboardingProfile() {
                     {fullNameError ? <Text style={styles.errorText}>{fullNameError}</Text> : null}
                 </View>
 
-                {/* Service */}
+                {/* Services - Premium Card Selection */}
                 <View style={styles.section}>
-                    <Text style={styles.inputLabel}>Select Service <Text style={styles.required}>*</Text></Text>
-                    <View style={styles.pillRow}>
-                        {SERVICE_OPTIONS.map(opt => (
-                            <TouchableOpacity
-                                key={opt.id}
-                                style={[
-                                    styles.servicePill,
-                                    serviceId === opt.id && { backgroundColor: `${opt.color}15`, borderColor: opt.color },
-                                ]}
-                                onPress={() => setServiceId(opt.id)}
-                            >
-                                <Ionicons name={opt.icon} size={18} color={serviceId === opt.id ? opt.color : '#6b7280'} style={{ marginRight: 6 }} />
-                                <Text style={[styles.pillText, serviceId === opt.id && { color: opt.color }]}>
-                                    {opt.name}
-                                </Text>
+                    <View style={styles.sectionHeader}>
+                        <Text style={styles.inputLabel}>Select Services <Text style={styles.required}>*</Text></Text>
+                        <View style={styles.bulkActions}>
+                            <TouchableOpacity onPress={selectAllServices} style={styles.bulkAction}>
+                                <Text style={styles.bulkActionText}>Select All</Text>
                             </TouchableOpacity>
-                        ))}
+                            <TouchableOpacity onPress={clearAllServices} style={styles.bulkAction}>
+                                <Text style={styles.bulkActionText}>Clear All</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
+                    <Text style={styles.helperText}>Tap on services you offer (multiple selection allowed)</Text>
+                    
+                    <View style={styles.servicesGrid}>
+                        {SERVICE_OPTIONS.map(opt => {
+                            const isSelected = selectedServiceIds.includes(opt.id);
+                            return (
+                                <TouchableOpacity
+                                    key={opt.id}
+                                    style={[
+                                        styles.serviceCard,
+                                        isSelected && { 
+                                            borderColor: opt.color, 
+                                            backgroundColor: `${opt.color}08`,
+                                            shadowColor: opt.color,
+                                            shadowOpacity: 0.15,
+                                            shadowRadius: 8,
+                                            elevation: 4,
+                                        },
+                                    ]}
+                                    onPress={() => toggleServiceSelection(opt.id)}
+                                    activeOpacity={0.7}
+                                >
+                                    <View style={[styles.serviceIcon, { backgroundColor: `${opt.color}15` }]}>
+                                        <Ionicons name={opt.icon} size={28} color={isSelected ? opt.color : '#6b7280'} />
+                                    </View>
+                                    <Text style={[styles.serviceName, isSelected && { color: opt.color, fontWeight: '700' }]}>
+                                        {opt.displayName}
+                                    </Text>
+                                    {isSelected && (
+                                        <View style={[styles.checkBadge, { backgroundColor: opt.color }]}>
+                                            <Ionicons name="checkmark" size={16} color="#fff" />
+                                        </View>
+                                    )}
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                    
+                    {/* Selected Services Chips */}
+                    {selectedServiceIds.length > 0 && (
+                        <View style={styles.selectedServicesSection}>
+                            <Text style={styles.selectedServicesLabel}>Selected Services:</Text>
+                            <View style={styles.selectedChipsContainer}>
+                                {SERVICE_OPTIONS
+                                    .filter(service => selectedServiceIds.includes(service.id))
+                                    .map(service => (
+                                        <View
+                                            key={service.id}
+                                            style={[
+                                                styles.selectedChip,
+                                                { backgroundColor: `${service.color}15` }
+                                            ]}
+                                        >
+                                            <Ionicons name="checkmark-circle" size={14} color={service.color} />
+                                            <Text style={[styles.selectedChipText, { color: service.color }]}>
+                                                {service.displayName}
+                                            </Text>
+                                        </View>
+                                    ))}
+                            </View>
+                            <Text style={styles.selectedCount}>
+                                {selectedServiceIds.length} service{selectedServiceIds.length !== 1 ? 's' : ''} selected
+                            </Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Bio */}
@@ -331,7 +496,7 @@ export default function MistriOnboardingProfile() {
                 {/* Government ID */}
                 <View style={styles.section}>
                     <Text style={styles.inputLabel}>Government ID <Text style={styles.required}>*</Text></Text>
-                    <Text style={styles.helperText}>Upload a clear photo of both sides of your ID</Text>
+                    <Text style={styles.helperText}>Take clear photos of both sides of your ID</Text>
 
                     {/* ID Type selector */}
                     <View style={styles.idTypeGrid}>
@@ -356,12 +521,12 @@ export default function MistriOnboardingProfile() {
                         {renderIdPicker(
                             'Front Side',
                             idFrontUri,
-                            () => pickImage(setIdFrontUri, (b) => setIdFrontBase64(b))
+                            () => takePhoto(setIdFrontUri, (b) => setIdFrontBase64(b))
                         )}
                         {renderIdPicker(
                             'Back Side',
                             idBackUri,
-                            () => pickImage(setIdBackUri, (b) => setIdBackBase64(b))
+                            () => takePhoto(setIdBackUri, (b) => setIdBackBase64(b))
                         )}
                     </View>
                 </View>
@@ -411,28 +576,140 @@ const styles = StyleSheet.create({
     title: { fontSize: 26, fontWeight: '800', color: '#1a1a1a', marginBottom: 6 },
     subtitle: { fontSize: 14, color: '#6b7280', lineHeight: 20 },
     section: { marginBottom: 24 },
-    inputLabel: { fontSize: 15, fontWeight: '600', color: '#1a1a1a', marginBottom: 8 },
+    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+    inputLabel: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
     required: { color: '#ef4444' },
-    helperText: { fontSize: 13, color: '#6b7280', marginBottom: 10, lineHeight: 18 },
+    helperText: { fontSize: 13, color: '#6b7280', marginBottom: 12, lineHeight: 18 },
+    bulkActions: { flexDirection: 'row', gap: 12 },
+    bulkAction: { paddingHorizontal: 8, paddingVertical: 4 },
+    bulkActionText: { fontSize: 12, color: '#179d2e', fontWeight: '600' },
     inputWrapper: { borderWidth: 2, borderColor: '#e5e5e5', borderRadius: 12, backgroundColor: '#f8f9fa' },
     textInput: { paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, color: '#1a1a1a' },
     textArea: { height: 100, textAlignVertical: 'top' },
     errorText: { color: '#ef4444', fontSize: 13, marginTop: 4 },
-    avatarPlaceholder: { width: 80, height: 80, borderRadius: 40, overflow: 'hidden', borderWidth: 2, borderColor: '#e5e5e5' },
-    avatar: { width: 80, height: 80, borderRadius: 40 },
-    avatarEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8f9fa' },
-    avatarEmptyText: { fontSize: 11, color: '#9ca3af', marginTop: 4 },
-    pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-    servicePill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 10,
-        paddingHorizontal: 14,
+    
+    // Avatar styles
+    avatarPlaceholder: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        overflow: 'hidden',
         borderWidth: 2,
         borderColor: '#e5e5e5',
-        borderRadius: 10,
-        backgroundColor: '#ffffff',
+        position: 'relative',
     },
+    avatar: { width: 120, height: 120, borderRadius: 60 },
+    avatarEmpty: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f8f9fa'
+    },
+    avatarEmptyText: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
+    cameraOverlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 6,
+        gap: 4,
+    },
+    retakeText: { color: 'white', fontSize: 11, fontWeight: '500' },
+    
+    // Premium Service Cards
+    servicesGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 12,
+    },
+    serviceCard: {
+        width: '47%',
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 16,
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: '#e5e5e5',
+        position: 'relative',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    serviceIcon: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
+    },
+    serviceName: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#374151',
+        textTransform: 'capitalize',
+    },
+    checkBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    
+    // Selected Services Chips
+    selectedServicesSection: {
+        marginTop: 16,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#e5e5e5',
+    },
+    selectedServicesLabel: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#374151',
+        marginBottom: 10,
+    },
+    selectedChipsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 10,
+    },
+    selectedChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+    },
+    selectedChipText: {
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    selectedCount: {
+        fontSize: 12,
+        color: '#6b7280',
+        textAlign: 'center',
+        marginTop: 4,
+    },
+    
+    pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 },
     expPill: {
         paddingVertical: 10,
         paddingHorizontal: 18,
@@ -442,6 +719,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffffff',
     },
     pillText: { fontSize: 14, color: '#6b7280', fontWeight: '500', textTransform: 'capitalize' },
+    
     locationCard: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -463,6 +741,8 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     mapPickerText: { fontSize: 15, fontWeight: '600' },
+    
+    // ID styles
     idTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
     idTypePill: {
         paddingVertical: 8,
@@ -476,7 +756,7 @@ const styles = StyleSheet.create({
     idPickersRow: { flexDirection: 'row', gap: 12 },
     idPickerButton: {
         flex: 1,
-        height: 110,
+        height: 130,
         borderRadius: 12,
         borderWidth: 2,
         borderColor: '#e5e5e5',
@@ -490,7 +770,8 @@ const styles = StyleSheet.create({
         backgroundColor: '#f8f9fa',
         gap: 6,
     },
-    idPickerLabel: { fontSize: 12, color: '#6b7280', fontWeight: '500', textAlign: 'center' },
+    idPickerLabel: { fontSize: 13, color: '#6b7280', fontWeight: '600' },
+    idPickerSubLabel: { fontSize: 11, color: '#9ca3af' },
     idThumbnail: { width: '100%', height: '100%' },
     idPickerOverlay: {
         position: 'absolute',
@@ -499,6 +780,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'white',
         borderRadius: 11,
     },
+    
     submitButton: { paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
     buttonDisabled: { backgroundColor: '#d1d5db' },
     submitButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
@@ -510,4 +792,15 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     logoutText: { color: '#cc0000', fontSize: 15, fontWeight: '500' },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+    },
+    loadingText: {
+        marginTop: 12,
+        fontSize: 14,
+        color: '#6b7280',
+    },
 });

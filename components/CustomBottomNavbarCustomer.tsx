@@ -5,6 +5,7 @@ import {
     StyleSheet,
     Text,
     Dimensions,
+    Platform,
 } from 'react-native';
 
 import {
@@ -17,9 +18,15 @@ import {
     MaterialIcons,
 } from '@expo/vector-icons';
 
-import { customerBrand as B } from '../lib/customerDashboardTokens';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
+
+// DEFINING BLUE THEME FOR ACTIVE TABS
+const ACTIVE_BLUE = '#2563eb';
+const ACTIVE_BLUE_BG = '#2563eb15';
+const INACTIVE_COLOR = '#94a3b8';
+const INACTIVE_LABEL = '#64748b';
 
 const TABS = [
     {
@@ -55,8 +62,8 @@ const TABS = [
 export default function CustomBottomNavbar() {
     const router = useRouter();
     const pathname = usePathname();
+    const insets = useSafeAreaInsets();
 
-    // FIXED: Strict structure matching to handle nested path groups cleanly
     const activeIndex = TABS.findIndex((tab) => {
         if (tab.path === '/(protected)/(customer)') {
             return pathname === '/(protected)/(customer)' || pathname === '/(protected)/(customer)/';
@@ -71,14 +78,14 @@ export default function CustomBottomNavbar() {
     };
 
     const renderIcon = (tab, isActive) => {
-        const color = isActive ? B.accent : '#94a3b8';
+        const color = isActive ? ACTIVE_BLUE : INACTIVE_COLOR;
         const iconName = isActive ? tab.activeIcon : tab.icon;
 
         if (tab.type === 'ion') {
             return (
                 <Ionicons
                     name={iconName}
-                    size={22}
+                    size={24}
                     color={color}
                 />
             );
@@ -87,14 +94,14 @@ export default function CustomBottomNavbar() {
         return (
             <MaterialIcons
                 name={iconName}
-                size={22}
+                size={24}
                 color={color}
             />
         );
     };
 
     return (
-        <View style={styles.wrapper}>
+        <View style={[styles.wrapper, { bottom: Math.max(insets.bottom, 16) }]}>
             <View style={styles.container}>
                 {TABS.map((tab, index) => {
                     const isActive = index === activeIndex;
@@ -110,7 +117,7 @@ export default function CustomBottomNavbar() {
                                 <View
                                     style={[
                                         styles.iconWrapper,
-                                        isActive && { backgroundColor: `${B.accent}10` },
+                                        isActive && styles.activeIconWrapper,
                                     ]}
                                 >
                                     {renderIcon(tab, isActive)}
@@ -119,7 +126,7 @@ export default function CustomBottomNavbar() {
                                 <Text
                                     style={[
                                         styles.label,
-                                        isActive && { color: B.accent, fontWeight: '700' },
+                                        isActive && styles.activeLabel,
                                     ]}
                                 >
                                     {tab.label}
@@ -138,49 +145,67 @@ const styles = StyleSheet.create({
         position: 'absolute',
         left: 0,
         right: 0,
-        bottom: 20,
         alignItems: 'center',
         zIndex: 1000,
     },
     container: {
         width: width - 32,
-        height: 66,
+        height: 70,
         backgroundColor: '#ffffff',
-        borderRadius: 24,
+        borderRadius: 28,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-around',
-        paddingHorizontal: 8,
+        paddingHorizontal: 4,
+        // Enhanced shadow for better depth
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.05,
-        shadowRadius: 16,
-        elevation: 6,
+        shadowOffset: { 
+            width: 0, 
+            height: Platform.OS === 'ios' ? 2 : 4,
+        },
+        shadowOpacity: Platform.OS === 'ios' ? 0.1 : 0.15,
+        shadowRadius: Platform.OS === 'ios' ? 12 : 8,
+        elevation: 10,
         borderWidth: 1,
-        borderColor: '#f1f5f9',
+        borderColor: 'rgba(226, 232, 240, 0.6)',
     },
     tabButton: {
         flex: 1,
         height: '100%',
         justifyContent: 'center',
         alignItems: 'center',
+        paddingVertical: 6,
     },
     tabContent: {
         alignItems: 'center',
         justifyContent: 'center',
     },
     iconWrapper: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 44,
+        height: 30,
+        borderRadius: 15,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 2,
+        // Transition for smooth state changes
+        backgroundColor: 'transparent',
+    },
+    activeIconWrapper: {
+        backgroundColor: ACTIVE_BLUE_BG,
+        // Optional: add a subtle scale animation effect
+        transform: [{ scale: 1 }],
     },
     label: {
         fontSize: 11,
-        fontWeight: '600',
-        color: '#94a3b8',
+        fontWeight: '500',
+        color: INACTIVE_LABEL,
         letterSpacing: -0.1,
+        textAlign: 'center',
+        includeFontPadding: false,
+        textAlignVertical: 'center',
+    },
+    activeLabel: {
+        color: ACTIVE_BLUE,
+        fontWeight: '700',
     },
 });

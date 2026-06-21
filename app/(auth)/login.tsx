@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
     TextInput,
@@ -9,10 +9,13 @@ import {
     ScrollView,
     Platform,
     Modal,
+    Pressable,
     ActivityIndicator,
     Dimensions,
     Animated,
-    PanResponder,
+    Image,
+    NativeSyntheticEvent,
+    NativeScrollEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -41,31 +44,37 @@ interface FormData {
 }
 
 type RoleParam = 'user' | 'mistri';
+type FieldName = 'name' | 'phone' | 'password';
 
 const ROLE_CONFIG = {
     user: {
         accent: '#0177b8',
-        accentLight: '#0177b820',
+        accentSoft: '#e7f3fb',
         title: 'Find a Service',
-        subtitle: 'Login or create account',
+        subtitle: 'Login or create an account',
         placeholder: 'John Doe',
-        gradient: ['#0177b8', '#005a8f'] as const,
+        gradient: ['#0a8fd1', '#045a8f'] as const,
     },
     mistri: {
         accent: '#179d2e',
-        accentLight: '#179d2e20',
+        accentSoft: '#e9f8ec',
         title: "I'm a Mistri",
         subtitle: 'Login or start earning',
         placeholder: 'Ram Bahadur',
-        gradient: ['#179d2e', '#0e6b20'] as const,
+        gradient: ['#22b83b', '#0e6b20'] as const,
     },
 };
 
-// Month names in Nepali calendar
+// Month names in the Nepali (Bikram Sambat) calendar
 const MONTH_NAMES = [
     'Baisakh', 'Jestha', 'Ashad', 'Shrawan', 'Bhadra', 'Ashwin',
-    'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra'
+    'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra',
 ];
+
+const ITEM_HEIGHT = 46;
+const VISIBLE_ROWS = 5;
+const PICKER_ROW_HEIGHT = ITEM_HEIGHT * VISIBLE_ROWS;
+const PICKER_PADDING = (PICKER_ROW_HEIGHT - ITEM_HEIGHT) / 2;
 
 // Get current Nepali date in YYYY-MM-DD format
 const getCurrentNepaliDate = (): string => {
@@ -76,7 +85,7 @@ const getCurrentNepaliDate = (): string => {
     return `${year}-${month}-${day}`;
 };
 
-// Format Nepali date for display (e.g., "2060-04-28" -> "Baisakh 28, 2060")
+// Format Nepali date for display (e.g., "2060-04-28" -> "Bhadra 28, 2060 BS")
 const formatDisplayDate = (dateStr: string): string => {
     if (!dateStr) return '';
     try {
@@ -88,13 +97,13 @@ const formatDisplayDate = (dateStr: string): string => {
     }
 };
 
-// Calculate age from Nepali date
+// Calculate age from a Nepali (BS) date string
 const calculateAgeFromNepaliDate = (nepaliDateStr: string): number | null => {
     if (!nepaliDateStr) return null;
     try {
         const currentNepali = new NepaliDate(new Date());
         const [year, month, day] = nepaliDateStr.split('-').map(Number);
-        
+
         if (!year || !month || !day) return null;
 
         let age = currentNepali.getYear() - year;
@@ -110,13 +119,38 @@ const calculateAgeFromNepaliDate = (nepaliDateStr: string): number | null => {
     }
 };
 
-// Date Picker Modal Component
+// BUG FIX: the previous implementation guessed days-per-month from a
+// hardcoded table and a `year % 3 === 0` leap-year rule, which is not how
+// the Bikram Sambat calendar actually works and produced wrong day counts
+// for many years. Instead, we ask the date-conversion library itself:
+// convert "the 1st of next month" to the Gregorian calendar, step back one
+// day, then convert that back to BS - the resulting day number is exactly
+// how many days the requested month has.
+const getDaysInMonth = (month: number, year: number): number => {
+    if (!month || !year) return 32;
+    try {
+        const nextMonthIndex = month === 12 ? 0 : month; // getMonth()/constructor month index is 0-based
+        const nextYear = month === 12 ? year + 1 : year;
+        const firstOfNextMonth = new NepaliDate(nextYear, nextMonthIndex, 1).toJsDate();
+        const lastDayOfThisMonth = new Date(firstOfNextMonth.getTime() - 24 * 60 * 60 * 1000);
+        const bsLastDay = new NepaliDate(lastDayOfThisMonth);
+        return bsLastDay.getDate();
+    } catch {
+        return 30;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Date Picker Modal - redesigned as a bottom sheet with a centered "wheel"
+// highlight, tap-to-select, drag-to-snap, and auto-scroll to the current
+// selection when it opens.
+// ---------------------------------------------------------------------------
 const DatePickerModal = ({
     visible,
     onClose,
     onConfirm,
     initialDate,
-    accentColor = '#0177b8'
+    accentColor = '#0177b8',
 }: {
     visible: boolean;
     onClose: () => void;
@@ -127,76 +161,114 @@ const DatePickerModal = ({
     const [selectedYear, setSelectedYear] = useState('');
     const [selectedMonth, setSelectedMonth] = useState('');
     const [selectedDay, setSelectedDay] = useState('');
-    const [activePicker, setActivePicker] = useState<'year' | 'month' | 'day'>('year');
-    const slideAnim = useRef(new Animated.Value(0)).current;
 
-    // Generate data for pickers
+    const slideAnim = useRef(new Animated.Value(height)).current;
+    const backdropAnim = useRef(new Animated.Value(0)).current;
+
+    const yearScrollRef = useRef<ScrollView>(null);
+    const monthScrollRef = useRef<ScrollView>(null);
+    const dayScrollRef = useRef<ScrollView>(null);
+
     const currentYear = new NepaliDate(new Date()).getYear();
     const years = Array.from({ length: 121 }, (_, i) => currentYear - i);
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
+    const daysInSelectedMonth = getDaysInMonth(parseInt(selectedMonth, 10), parseInt(selectedYear, 10));
+    const dayList = Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1);
 
-    // Get days based on selected month (Nepali calendar specific)
-    const getDaysForMonth = (month: number, year: number) => {
-        if (!month || !year) return Array.from({ length: 32 }, (_, i) => i + 1);
-        // Nepali calendar month days
-        const monthDays: Record<number, number> = {
-            1: 31,  // Baisakh
-            2: 31,  // Jestha
-            3: 32,  // Ashad
-            4: 32,  // Shrawan
-            5: 31,  // Bhadra
-            6: 30,  // Ashwin
-            7: 30,  // Kartik
-            8: 30,  // Mangsir
-            9: 29,  // Poush
-            10: 29, // Magh
-            11: 30, // Falgun
-            12: 30, // Chaitra
-        };
-        // Check for leap year adjustment for Poush (month 9)
-        let days = monthDays[month] || 32;
-        if (month === 9) {
-            // Nepali leap year logic - every 3 years
-            const isLeapYear = year % 3 === 0;
-            days = isLeapYear ? 30 : 29;
+    const scrollToValue = (ref: React.RefObject<ScrollView>, list: number[], value: number, animated = false) => {
+        const index = list.indexOf(value);
+        if (index >= 0 && ref.current) {
+            ref.current.scrollTo({ y: index * ITEM_HEIGHT, animated });
         }
-        return Array.from({ length: days }, (_, i) => i + 1);
     };
 
-    const days = getDaysForMonth(parseInt(selectedMonth), parseInt(selectedYear));
-
-    // Initialize with initial date or current date
-    React.useEffect(() => {
+    // Open/close animation + jump every wheel to the currently selected value
+    useEffect(() => {
         if (visible) {
+            let y = '';
+            let m = '';
+            let d = '';
+
             if (initialDate && initialDate.includes('-')) {
                 const parts = initialDate.split('-');
                 if (parts.length === 3) {
-                    setSelectedYear(parts[0]);
-                    setSelectedMonth(parts[1]);
-                    setSelectedDay(parts[2]);
+                    [y, m, d] = parts;
                 }
             } else {
-                const currentDate = getCurrentNepaliDate();
-                const [year, month, day] = currentDate.split('-');
-                setSelectedYear(year);
-                setSelectedMonth(month);
-                setSelectedDay(day);
+                const current = getCurrentNepaliDate();
+                [y, m, d] = current.split('-');
             }
-            // Animate in
-            Animated.timing(slideAnim, {
-                toValue: 0,
-                duration: 300,
-                useNativeDriver: true,
-            }).start();
-        } else {
-            // Animate out
-            Animated.timing(slideAnim, {
-                toValue: 300,
-                duration: 300,
-                useNativeDriver: true,
-            }).start();
+
+            setSelectedYear(y);
+            setSelectedMonth(m);
+            setSelectedDay(d);
+
+            Animated.parallel([
+                Animated.timing(backdropAnim, {
+                    toValue: 1,
+                    duration: 220,
+                    useNativeDriver: true,
+                }),
+                Animated.spring(slideAnim, {
+                    toValue: 0,
+                    useNativeDriver: true,
+                    damping: 18,
+                    mass: 0.9,
+                    stiffness: 160,
+                }),
+            ]).start();
+
+            // Wait one tick for the lists to lay out, then jump to position.
+            const timeout = setTimeout(() => {
+                scrollToValue(yearScrollRef, years, parseInt(y, 10));
+                scrollToValue(monthScrollRef, months, parseInt(m, 10));
+                scrollToValue(dayScrollRef, dayList, parseInt(d, 10));
+            }, 60);
+            return () => clearTimeout(timeout);
         }
+
+        Animated.parallel([
+            Animated.timing(backdropAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
+            Animated.timing(slideAnim, { toValue: height, duration: 220, useNativeDriver: true }),
+        ]).start();
+        return undefined;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
+
+    // BUG FIX: if the user picks a month/year with fewer days than the one
+    // currently selected (e.g. switching from a 32-day month to a 29-day
+    // one), the old code left the day untouched, leaving an impossible
+    // date like "Poush 32". Clamp it down and re-center the day wheel.
+    useEffect(() => {
+        if (!visible || !selectedDay) return;
+        const maxDay = daysInSelectedMonth;
+        if (parseInt(selectedDay, 10) > maxDay) {
+            setSelectedDay(String(maxDay));
+            scrollToValue(dayScrollRef, dayList, maxDay, true);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedMonth, selectedYear]);
+
+    const selectValue = (
+        list: number[],
+        value: number,
+        ref: React.RefObject<ScrollView>,
+        setter: (v: string) => void
+    ) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setter(String(value));
+        scrollToValue(ref, list, value, true);
+    };
+
+    const handleScrollEnd = (
+        e: NativeSyntheticEvent<NativeScrollEvent>,
+        list: number[],
+        setter: (v: string) => void
+    ) => {
+        const offsetY = e.nativeEvent.contentOffset.y;
+        const index = Math.max(0, Math.min(list.length - 1, Math.round(offsetY / ITEM_HEIGHT)));
+        setter(String(list[index]));
+    };
 
     const handleConfirm = () => {
         if (!selectedYear || !selectedMonth || !selectedDay) {
@@ -204,194 +276,195 @@ const DatePickerModal = ({
             return;
         }
 
-        const year = parseInt(selectedYear);
-        const month = parseInt(selectedMonth);
-        const day = parseInt(selectedDay);
-
-        if (year < 1970 || year > 2090) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            return;
-        }
-        if (month < 1 || month > 12) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            return;
-        }
-
-        const maxDays = getDaysForMonth(month, year);
-        if (day < 1 || day > maxDays.length) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            return;
-        }
-
-        const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const formattedDate = `${selectedYear}-${String(parseInt(selectedMonth, 10)).padStart(2, '0')}-${String(
+            parseInt(selectedDay, 10)
+        ).padStart(2, '0')}`;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onConfirm(formattedDate);
         onClose();
     };
 
-    const renderPickerItems = (items: number[], selected: string, label: (item: number) => string) => (
-        <ScrollView
-            style={styles.pickerScroll}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.pickerContent}
-            snapToAlignment="center"
-            decelerationRate="fast"
-        >
-            {items.map((item) => {
-                const isSelected = selected === item.toString();
-                return (
+    const age = selectedYear && selectedMonth && selectedDay
+        ? calculateAgeFromNepaliDate(`${selectedYear}-${selectedMonth}-${selectedDay}`)
+        : null;
+    const isUnderage = age !== null && age < 18;
+
+    return (
+        <Modal visible={visible} animationType="none" transparent onRequestClose={onClose}>
+            <Animated.View style={[styles.modalBackdrop, { opacity: backdropAnim }]}>
+                <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+            </Animated.View>
+
+            <Animated.View
+                style={[
+                    styles.sheetContent,
+                    { transform: [{ translateY: slideAnim }] },
+                ]}
+            >
+                <View style={styles.sheetHandle} />
+
+                <View style={styles.sheetHeader}>
+                    <Text style={styles.sheetTitle}>Date of Birth</Text>
                     <TouchableOpacity
-                        key={item}
-                        style={[
-                            styles.pickerItem,
-                            isSelected && { backgroundColor: accentColor + '20', borderRadius: 12 }
-                        ]}
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            if (activePicker === 'year') setSelectedYear(item.toString());
-                            else if (activePicker === 'month') setSelectedMonth(item.toString());
-                            else if (activePicker === 'day') setSelectedDay(item.toString());
+                            onClose();
+                        }}
+                        style={styles.sheetClose}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="close" size={18} color="#666" />
+                    </TouchableOpacity>
+                </View>
+
+                {selectedYear && selectedMonth && selectedDay && (
+                    <View style={styles.selectedDateContainer}>
+                        <Text style={[styles.selectedDateText, { color: accentColor }]}>
+                            {formatDisplayDate(`${selectedYear}-${selectedMonth}-${selectedDay}`)}
+                        </Text>
+                        {age !== null && (
+                            <View
+                                style={[
+                                    styles.agePill,
+                                    { backgroundColor: isUnderage ? '#fff0ef' : accentColor + '15' },
+                                ]}
+                            >
+                                <Ionicons
+                                    name={isUnderage ? 'alert-circle' : 'checkmark-circle'}
+                                    size={14}
+                                    color={isUnderage ? '#ff3b30' : accentColor}
+                                />
+                                <Text style={[styles.agePillText, { color: isUnderage ? '#ff3b30' : accentColor }]}>
+                                    {age} years old{isUnderage ? ' · under 18' : ''}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                )}
+
+                <View style={styles.pickerRow}>
+                    <View style={[styles.pickerHighlight, { borderColor: accentColor + '40', backgroundColor: accentColor + '0d' }]} pointerEvents="none" />
+
+                    <View style={styles.pickerColumn}>
+                        <ScrollView
+                            ref={yearScrollRef}
+                            style={styles.pickerScroll}
+                            showsVerticalScrollIndicator={false}
+                            snapToInterval={ITEM_HEIGHT}
+                            decelerationRate="fast"
+                            contentContainerStyle={{ paddingVertical: PICKER_PADDING }}
+                            onMomentumScrollEnd={(e) => handleScrollEnd(e, years, setSelectedYear)}
+                        >
+                            {years.map((year) => (
+                                <TouchableOpacity
+                                    key={year}
+                                    style={styles.pickerItem}
+                                    onPress={() => selectValue(years, year, yearScrollRef, setSelectedYear)}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.pickerItemText,
+                                            selectedYear === year.toString() && {
+                                                color: accentColor,
+                                                fontWeight: '700',
+                                                fontSize: 17,
+                                            },
+                                        ]}
+                                    >
+                                        {year}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+
+                    <View style={styles.pickerColumn}>
+                        <ScrollView
+                            ref={monthScrollRef}
+                            style={styles.pickerScroll}
+                            showsVerticalScrollIndicator={false}
+                            snapToInterval={ITEM_HEIGHT}
+                            decelerationRate="fast"
+                            contentContainerStyle={{ paddingVertical: PICKER_PADDING }}
+                            onMomentumScrollEnd={(e) => handleScrollEnd(e, months, setSelectedMonth)}
+                        >
+                            {months.map((month) => (
+                                <TouchableOpacity
+                                    key={month}
+                                    style={styles.pickerItem}
+                                    onPress={() => selectValue(months, month, monthScrollRef, setSelectedMonth)}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.pickerItemText,
+                                            selectedMonth === month.toString() && {
+                                                color: accentColor,
+                                                fontWeight: '700',
+                                                fontSize: 17,
+                                            },
+                                        ]}
+                                    >
+                                        {MONTH_NAMES[month - 1].substring(0, 3)}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+
+                    <View style={styles.pickerColumn}>
+                        <ScrollView
+                            ref={dayScrollRef}
+                            style={styles.pickerScroll}
+                            showsVerticalScrollIndicator={false}
+                            snapToInterval={ITEM_HEIGHT}
+                            decelerationRate="fast"
+                            contentContainerStyle={{ paddingVertical: PICKER_PADDING }}
+                            onMomentumScrollEnd={(e) => handleScrollEnd(e, dayList, setSelectedDay)}
+                        >
+                            {dayList.map((day) => (
+                                <TouchableOpacity
+                                    key={day}
+                                    style={styles.pickerItem}
+                                    onPress={() => selectValue(dayList, day, dayScrollRef, setSelectedDay)}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.pickerItemText,
+                                            selectedDay === day.toString() && {
+                                                color: accentColor,
+                                                fontWeight: '700',
+                                                fontSize: 17,
+                                            },
+                                        ]}
+                                    >
+                                        {day}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                </View>
+
+                <View style={styles.sheetFooter}>
+                    <TouchableOpacity
+                        style={[styles.sheetButton, styles.sheetButtonCancel]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            onClose();
                         }}
                         activeOpacity={0.7}
                     >
-                        <Text style={[
-                            styles.pickerItemText,
-                            isSelected && { color: accentColor, fontWeight: '700', fontSize: 18 }
-                        ]}>
-                            {label(item)}
-                        </Text>
-                        {isSelected && (
-                            <View style={[styles.pickerSelectedIndicator, { backgroundColor: accentColor }]} />
-                        )}
+                        <Text style={styles.sheetButtonCancelText}>Cancel</Text>
                     </TouchableOpacity>
-                );
-            })}
-        </ScrollView>
-    );
-
-    const renderYearPicker = () => renderPickerItems(
-        years,
-        selectedYear,
-        (year) => year.toString()
-    );
-
-    const renderMonthPicker = () => renderPickerItems(
-        months,
-        selectedMonth,
-        (month) => MONTH_NAMES[month - 1]
-    );
-
-    const renderDayPicker = () => renderPickerItems(
-        days,
-        selectedDay,
-        (day) => day.toString()
-    );
-
-    return (
-        <Modal
-            visible={visible}
-            animationType="fade"
-            transparent={true}
-            onRequestClose={onClose}
-        >
-            <View style={styles.modalOverlay}>
-                <Animated.View 
-                    style={[
-                        styles.modalContent,
-                        { transform: [{ translateY: slideAnim }] }
-                    ]}
-                >
-                    {/* Header */}
-                    <LinearGradient
-                        colors={[accentColor, accentColor + 'dd']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.modalHeader}
+                    <TouchableOpacity
+                        style={[styles.sheetButton, { backgroundColor: accentColor }]}
+                        onPress={handleConfirm}
+                        activeOpacity={0.85}
                     >
-                        <Text style={styles.modalTitle}>Select Date of Birth (BS)</Text>
-                        <TouchableOpacity 
-                            onPress={() => {
-                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                onClose();
-                            }} 
-                            style={styles.modalClose}
-                        >
-                            <Ionicons name="close" size={24} color="#fff" />
-                        </TouchableOpacity>
-                    </LinearGradient>
-
-                    {/* Selected Date Display */}
-                    {selectedYear && selectedMonth && selectedDay && (
-                        <View style={styles.selectedDateContainer}>
-                            <Text style={styles.selectedDateLabel}>Selected Date</Text>
-                            <Text style={[styles.selectedDateText, { color: accentColor }]}>
-                                {formatDisplayDate(`${selectedYear}-${selectedMonth}-${selectedDay}`)}
-                            </Text>
-                            {(() => {
-                                const age = calculateAgeFromNepaliDate(`${selectedYear}-${selectedMonth}-${selectedDay}`);
-                                return age !== null ? (
-                                    <Text style={styles.ageText}>
-                                        Age: {age} years {age < 18 ? '⚠️ Under 18' : '✅'}
-                                    </Text>
-                                ) : null;
-                            })()}
-                        </View>
-                    )}
-
-                    {/* Picker Tabs */}
-                    <View style={styles.pickerTabs}>
-                        {['year', 'month', 'day'].map((tab) => (
-                            <TouchableOpacity
-                                key={tab}
-                                style={[
-                                    styles.pickerTab,
-                                    activePicker === tab && { borderBottomColor: accentColor, borderBottomWidth: 3 }
-                                ]}
-                                onPress={() => {
-                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                    setActivePicker(tab as 'year' | 'month' | 'day');
-                                }}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={[
-                                    styles.pickerTabText,
-                                    activePicker === tab && { color: accentColor, fontWeight: '700' }
-                                ]}>
-                                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-
-                    {/* Picker Content */}
-                    <View style={styles.pickerContainer}>
-                        {activePicker === 'year' && renderYearPicker()}
-                        {activePicker === 'month' && renderMonthPicker()}
-                        {activePicker === 'day' && renderDayPicker()}
-                    </View>
-
-                    {/* Footer Buttons */}
-                    <View style={styles.modalFooter}>
-                        <TouchableOpacity
-                            style={[styles.modalButton, styles.modalButtonCancel]}
-                            onPress={() => {
-                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                onClose();
-                            }}
-                            activeOpacity={0.7}
-                        >
-                            <Text style={styles.modalButtonCancelText}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.modalButton, styles.modalButtonConfirm, { backgroundColor: accentColor }]}
-                            onPress={handleConfirm}
-                            activeOpacity={0.7}
-                        >
-                            <Text style={styles.modalButtonConfirmText}>Confirm</Text>
-                        </TouchableOpacity>
-                    </View>
-                </Animated.View>
-            </View>
+                        <Text style={styles.sheetButtonConfirmText}>Confirm</Text>
+                    </TouchableOpacity>
+                </View>
+            </Animated.View>
         </Modal>
     );
 };
@@ -415,10 +488,49 @@ export default function LoginScreen() {
     const [errors, setErrors] = useState<Errors>({});
     const [showPassword, setShowPassword] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
+    const [focusedField, setFocusedField] = useState<FieldName | null>(null);
+
+    const nameInputRef = useRef<TextInput>(null);
+    const phoneInputRef = useRef<TextInput>(null);
+    const passwordInputRef = useRef<TextInput>(null);
+
+    // Entrance animation
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const riseAnim = useRef(new Animated.Value(16)).current;
+    const shakeAnim = useRef(new Animated.Value(0)).current;
+    // Animated pill that slides behind the Login/Sign Up switch
+    const switchAnim = useRef(new Animated.Value(0)).current;
+    // Press-feedback scale for the primary button
+    const buttonScale = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        Animated.parallel([
+            Animated.timing(fadeAnim, { toValue: 1, duration: 450, useNativeDriver: true }),
+            Animated.timing(riseAnim, { toValue: 0, duration: 450, useNativeDriver: true }),
+        ]).start();
+    }, []);
+
+    useEffect(() => {
+        Animated.timing(switchAnim, {
+            toValue: mode === 'login' ? 0 : 1,
+            duration: 240,
+            useNativeDriver: false,
+        }).start();
+    }, [mode]);
+
+    const triggerShake = () => {
+        shakeAnim.setValue(0);
+        Animated.sequence([
+            Animated.timing(shakeAnim, { toValue: 8, duration: 45, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: -8, duration: 45, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: 5, duration: 45, useNativeDriver: true }),
+            Animated.timing(shakeAnim, { toValue: 0, duration: 45, useNativeDriver: true }),
+        ]).start();
+    };
 
     const showToast = (type: 'success' | 'error' | 'info', title: string, message?: string) => {
         Toast.show({
-            type: type,
+            type,
             text1: title,
             text2: message,
             position: 'top',
@@ -428,8 +540,12 @@ export default function LoginScreen() {
         });
     };
 
+    // BUG FIX: the original regex `[6-9]\d{9}` accepted any 10-digit number
+    // starting with 6-9, including numbers starting with "6" or plain "7"
+    // which Nepali mobile numbers never do - they're all 10 digits
+    // starting with "9" (96/97/98xxxxxxxx).
     const validatePhone = (phoneNumber: string): boolean => {
-        return /^[6-9]\d{9}$/.test(phoneNumber);
+        return /^9[6-8]\d{8}$/.test(phoneNumber);
     };
 
     const validateForm = (): boolean => {
@@ -455,7 +571,7 @@ export default function LoginScreen() {
         if (!formData.phone) {
             newErrors.phone = 'Phone number is required';
         } else if (!validatePhone(formData.phone)) {
-            newErrors.phone = 'Enter a valid 10-digit number';
+            newErrors.phone = 'Enter a valid 10-digit Nepali number';
         }
 
         if (!formData.password) {
@@ -469,9 +585,9 @@ export default function LoginScreen() {
     };
 
     const handleInputChange = (field: keyof FormData, value: string) => {
-        setFormData(prev => ({ ...prev, [field]: value }));
+        setFormData((prev) => ({ ...prev, [field]: value }));
         if (errors[field]) {
-            setErrors(prev => ({ ...prev, [field]: undefined }));
+            setErrors((prev) => ({ ...prev, [field]: undefined }));
         }
     };
 
@@ -485,6 +601,7 @@ export default function LoginScreen() {
     const handleContinue = async () => {
         if (!validateForm()) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            triggerShake();
             return;
         }
 
@@ -511,7 +628,7 @@ export default function LoginScreen() {
                         phone: formData.phone,
                         role,
                         mode: 'signup',
-                        name: formData.name.trim()
+                        name: formData.name.trim(),
                     },
                 });
             } else {
@@ -525,7 +642,7 @@ export default function LoginScreen() {
                         params: {
                             phone: formData.phone,
                             role,
-                            mode: 'login'
+                            mode: 'login',
                         },
                     });
                     return;
@@ -567,9 +684,38 @@ export default function LoginScreen() {
 
     const isLoading = isSubmitting || authLoading;
 
+    const switchContainerWidth = width - 48; // matches marginHorizontal: 24 on both sides
+    const switchPadding = 4;
+    const pillWidth = (switchContainerWidth - switchPadding * 2) / 2;
+    const pillLeft = switchAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [switchPadding, switchPadding + pillWidth],
+    });
+
+    const focusStyle = (field: FieldName) =>
+        focusedField === field
+            ? {
+                  borderColor: config.accent,
+                  borderWidth: 1.5,
+                  backgroundColor: '#fff',
+                  shadowColor: config.accent,
+                  shadowOpacity: 0.12,
+                  shadowRadius: 6,
+                  shadowOffset: { width: 0, height: 2 },
+                  elevation: 2,
+              }
+            : null;
+
+    const onPressInButton = () => {
+        Animated.spring(buttonScale, { toValue: 0.97, useNativeDriver: true, speed: 40, bounciness: 0 }).start();
+    };
+    const onPressOutButton = () => {
+        Animated.spring(buttonScale, { toValue: 1, useNativeDriver: true, speed: 40, bounciness: 4 }).start();
+    };
+
     return (
         <>
-            <StatusBar style="dark" />
+            <StatusBar style="light" />
             <SafeAreaView style={styles.safeArea}>
                 <KeyboardAvoidingView
                     style={styles.container}
@@ -581,37 +727,52 @@ export default function LoginScreen() {
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
                     >
-                        {/* Back Button */}
-                        <TouchableOpacity 
-                            onPress={() => {
-                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                router.back();
-                            }} 
-                            style={styles.backButton}
-                            activeOpacity={0.7}
-                        >
-                            <Ionicons name="arrow-back" size={24} color="#666" />
-                        </TouchableOpacity>
-
-                        {/* Header with Gradient */}
+                        {/* Header with Logo */}
                         <LinearGradient
                             colors={config.gradient}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 1 }}
                             style={styles.headerGradient}
                         >
-                            <Text style={styles.cursiveBrand}>ServeX</Text>
+                            <View style={styles.headerDecorCircleOne} />
+                            <View style={styles.headerDecorCircleTwo} />
+
+                            <TouchableOpacity
+                                onPress={() => {
+                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                    router.back();
+                                }}
+                                style={styles.backButton}
+                                activeOpacity={0.7}
+                                accessibilityRole="button"
+                                accessibilityLabel="Go back"
+                            >
+                                <Ionicons name="arrow-back" size={22} color="#fff" />
+                            </TouchableOpacity>
+
+                            <View style={styles.logoContainer}>
+                                <Image
+                                    source={require('../../assets/images/icon.png')}
+                                    style={styles.logo}
+                                    resizeMode="contain"
+                                />
+                                <Text style={styles.brandText}>ServeX</Text>
+                            </View>
+
                             <Text style={styles.title}>{config.title}</Text>
                             <Text style={styles.subtitle}>{config.subtitle}</Text>
                         </LinearGradient>
 
                         {/* Mode Switch */}
                         <View style={styles.switchContainer}>
-                            <TouchableOpacity
+                            <Animated.View
                                 style={[
-                                    styles.switchButton,
-                                    mode === 'login' && { backgroundColor: config.accent }
+                                    styles.switchPill,
+                                    { left: pillLeft, width: pillWidth, backgroundColor: config.accent },
                                 ]}
+                            />
+                            <TouchableOpacity
+                                style={styles.switchButton}
                                 onPress={() => {
                                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                                     setMode('login');
@@ -619,16 +780,12 @@ export default function LoginScreen() {
                                 }}
                                 activeOpacity={0.7}
                             >
-                                <Text style={[
-                                    styles.switchText,
-                                    mode === 'login' && styles.switchTextActive
-                                ]}>Login</Text>
+                                <Text style={[styles.switchText, mode === 'login' && styles.switchTextActive]}>
+                                    Login
+                                </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={[
-                                    styles.switchButton,
-                                    mode === 'signup' && { backgroundColor: config.accent }
-                                ]}
+                                style={styles.switchButton}
                                 onPress={() => {
                                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                                     setMode('signup');
@@ -636,39 +793,55 @@ export default function LoginScreen() {
                                 }}
                                 activeOpacity={0.7}
                             >
-                                <Text style={[
-                                    styles.switchText,
-                                    mode === 'signup' && styles.switchTextActive
-                                ]}>Sign Up</Text>
+                                <Text style={[styles.switchText, mode === 'signup' && styles.switchTextActive]}>
+                                    Sign Up
+                                </Text>
                             </TouchableOpacity>
                         </View>
 
                         {/* Form Fields */}
-                        <View style={styles.formContainer}>
+                        <Animated.View
+                            style={[
+                                styles.formContainer,
+                                {
+                                    opacity: fadeAnim,
+                                    transform: [{ translateY: riseAnim }, { translateX: shakeAnim }],
+                                },
+                            ]}
+                        >
                             {mode === 'signup' && (
                                 <>
-                                    <View style={[
-                                        styles.inputGroup,
-                                        errors.name && styles.inputGroupError
-                                    ]}>
+                                    <View style={[styles.inputGroup, focusStyle('name'), errors.name && styles.inputGroupError]}>
                                         <View style={styles.inputIcon}>
                                             <Ionicons name="person-outline" size={20} color={config.accent} />
                                         </View>
                                         <TextInput
-                                            placeholder="Full Name"
+                                            ref={nameInputRef}
+                                            placeholder={config.placeholder}
                                             placeholderTextColor="#999"
                                             value={formData.name}
                                             onChangeText={(text) => handleInputChange('name', text)}
+                                            onFocus={() => setFocusedField('name')}
+                                            onBlur={() => setFocusedField(null)}
                                             style={styles.input}
                                             autoCapitalize="words"
+                                            autoComplete="name"
+                                            textContentType="name"
+                                            returnKeyType="next"
+                                            onSubmitEditing={() => {
+                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                setShowDatePicker(true);
+                                            }}
                                         />
                                     </View>
-                                    {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
+                                    {errors.name && (
+                                        <View style={styles.errorRow}>
+                                            <Ionicons name="alert-circle" size={13} color="#ff3b30" />
+                                            <Text style={styles.errorText}>{errors.name}</Text>
+                                        </View>
+                                    )}
 
-                                    <View style={[
-                                        styles.inputGroup,
-                                        errors.dob && styles.inputGroupError
-                                    ]}>
+                                    <View style={[styles.inputGroup, errors.dob && styles.inputGroupError]}>
                                         <View style={styles.inputIcon}>
                                             <Ionicons name="calendar-outline" size={20} color={config.accent} />
                                         </View>
@@ -679,21 +852,25 @@ export default function LoginScreen() {
                                             }}
                                             activeOpacity={0.7}
                                             style={styles.dateInputField}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Select date of birth"
                                         >
                                             <Text style={formData.dob ? styles.dateInputText : styles.dateInputPlaceholder}>
                                                 {formData.dob ? formatDisplayDate(formData.dob) : 'Date of Birth (BS)'}
                                             </Text>
-                                            <MaterialIcons name="calendar-today" size={22} color={config.accent} />
+                                            <MaterialIcons name="calendar-today" size={20} color={config.accent} />
                                         </TouchableOpacity>
                                     </View>
-                                    {errors.dob && <Text style={styles.errorText}>{errors.dob}</Text>}
+                                    {errors.dob && (
+                                        <View style={styles.errorRow}>
+                                            <Ionicons name="alert-circle" size={13} color="#ff3b30" />
+                                            <Text style={styles.errorText}>{errors.dob}</Text>
+                                        </View>
+                                    )}
                                 </>
                             )}
 
-                            <View style={[
-                                styles.inputGroup,
-                                errors.phone && styles.inputGroupError
-                            ]}>
+                            <View style={[styles.inputGroup, focusStyle('phone'), errors.phone && styles.inputGroupError]}>
                                 <View style={styles.inputIcon}>
                                     <Ionicons name="call-outline" size={20} color={config.accent} />
                                 </View>
@@ -701,34 +878,51 @@ export default function LoginScreen() {
                                     <View style={styles.countryCode}>
                                         <Text style={styles.countryText}>+977</Text>
                                     </View>
+                                    <View style={styles.countryDivider} />
                                     <TextInput
+                                        ref={phoneInputRef}
                                         placeholder="98XXXXXXXX"
                                         placeholderTextColor="#999"
                                         value={formData.phone}
                                         onChangeText={handlePhoneChange}
+                                        onFocus={() => setFocusedField('phone')}
+                                        onBlur={() => setFocusedField(null)}
                                         keyboardType="phone-pad"
                                         maxLength={10}
                                         style={styles.phoneInput}
+                                        autoComplete="tel"
+                                        textContentType="telephoneNumber"
+                                        returnKeyType="next"
+                                        onSubmitEditing={() => passwordInputRef.current?.focus()}
                                     />
                                 </View>
                             </View>
-                            {errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
+                            {errors.phone && (
+                                <View style={styles.errorRow}>
+                                    <Ionicons name="alert-circle" size={13} color="#ff3b30" />
+                                    <Text style={styles.errorText}>{errors.phone}</Text>
+                                </View>
+                            )}
 
-                            <View style={[
-                                styles.inputGroup,
-                                errors.password && styles.inputGroupError
-                            ]}>
+                            <View style={[styles.inputGroup, focusStyle('password'), errors.password && styles.inputGroupError]}>
                                 <View style={styles.inputIcon}>
                                     <Ionicons name="lock-closed-outline" size={20} color={config.accent} />
                                 </View>
                                 <TextInput
+                                    ref={passwordInputRef}
                                     placeholder="Password"
                                     placeholderTextColor="#999"
                                     value={formData.password}
                                     onChangeText={(text) => handleInputChange('password', text)}
+                                    onFocus={() => setFocusedField('password')}
+                                    onBlur={() => setFocusedField(null)}
                                     secureTextEntry={!showPassword}
                                     style={styles.input}
                                     autoCapitalize="none"
+                                    autoComplete={mode === 'signup' ? 'new-password' : 'password'}
+                                    textContentType={mode === 'signup' ? 'newPassword' : 'password'}
+                                    returnKeyType="done"
+                                    onSubmitEditing={handleContinue}
                                 />
                                 <TouchableOpacity
                                     onPress={() => {
@@ -737,31 +931,46 @@ export default function LoginScreen() {
                                     }}
                                     style={styles.passwordToggle}
                                     activeOpacity={0.7}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
                                 >
                                     <Ionicons
-                                        name={showPassword ? "eye-off-outline" : "eye-outline"}
+                                        name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                                         size={20}
                                         color="#999"
                                     />
                                 </TouchableOpacity>
                             </View>
-                            {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
+                            {errors.password && (
+                                <View style={styles.errorRow}>
+                                    <Ionicons name="alert-circle" size={13} color="#ff3b30" />
+                                    <Text style={styles.errorText}>{errors.password}</Text>
+                                </View>
+                            )}
 
                             {/* Submit Button */}
-                            <TouchableOpacity
-                                style={[styles.button, { backgroundColor: config.accent }]}
-                                onPress={handleContinue}
-                                disabled={isLoading}
-                                activeOpacity={0.8}
-                            >
-                                {isLoading ? (
-                                    <ActivityIndicator color="#fff" size="small" />
-                                ) : (
-                                    <Text style={styles.buttonText}>
-                                        {mode === 'login' ? 'Login' : 'Create Account'}
-                                    </Text>
-                                )}
-                            </TouchableOpacity>
+                            <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.button,
+                                        { backgroundColor: config.accent },
+                                        isLoading && styles.buttonDisabled,
+                                    ]}
+                                    onPress={handleContinue}
+                                    onPressIn={onPressInButton}
+                                    onPressOut={onPressOutButton}
+                                    disabled={isLoading}
+                                    activeOpacity={0.9}
+                                >
+                                    {isLoading ? (
+                                        <ActivityIndicator color="#fff" size="small" />
+                                    ) : (
+                                        <Text style={styles.buttonText}>
+                                            {mode === 'login' ? 'Login' : 'Create Account'}
+                                        </Text>
+                                    )}
+                                </TouchableOpacity>
+                            </Animated.View>
 
                             {mode === 'login' && (
                                 <TouchableOpacity
@@ -775,7 +984,7 @@ export default function LoginScreen() {
                                     <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
                                 </TouchableOpacity>
                             )}
-                        </View>
+                        </Animated.View>
                     </ScrollView>
                 </KeyboardAvoidingView>
 
@@ -813,6 +1022,34 @@ const styles = StyleSheet.create({
         flexGrow: 1,
         paddingBottom: 40,
     },
+    headerGradient: {
+        alignItems: 'center',
+        paddingTop: 50,
+        paddingBottom: 40,
+        borderBottomLeftRadius: 32,
+        borderBottomRightRadius: 32,
+        minHeight: height * 0.28,
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    headerDecorCircleOne: {
+        position: 'absolute',
+        top: -60,
+        right: -50,
+        width: 160,
+        height: 160,
+        borderRadius: 80,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+    },
+    headerDecorCircleTwo: {
+        position: 'absolute',
+        bottom: -70,
+        left: -60,
+        width: 200,
+        height: 200,
+        borderRadius: 100,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+    },
     backButton: {
         position: 'absolute',
         top: 16,
@@ -823,32 +1060,32 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.05)',
+        backgroundColor: 'rgba(255,255,255,0.2)',
     },
-    headerGradient: {
+    logoContainer: {
+        flexDirection: 'row',
         alignItems: 'center',
-        paddingTop: 60,
-        paddingBottom: 40,
-        borderBottomLeftRadius: 30,
-        borderBottomRightRadius: 30,
+        marginBottom: 16,
     },
-    cursiveBrand: {
-        fontSize: 42,
-        fontWeight: '400',
-        fontFamily: Platform.OS === 'ios' ? 'Snell Roundhand' : 'cursive',
-        fontStyle: 'italic',
+    logo: {
+        width: 48,
+        height: 48,
+        marginRight: 12,
+    },
+    brandText: {
+        fontSize: 36,
+        fontWeight: '800',
         color: '#fff',
-        marginBottom: 12,
-        letterSpacing: 1,
+        letterSpacing: 0.5,
         textShadowColor: 'rgba(0, 0, 0, 0.2)',
         textShadowOffset: { width: 1, height: 1 },
         textShadowRadius: 3,
     },
     title: {
-        fontSize: 20,
+        fontSize: 21,
         fontWeight: '700',
         color: '#fff',
-        marginTop: 12,
+        marginTop: 4,
     },
     subtitle: {
         fontSize: 14,
@@ -863,12 +1100,25 @@ const styles = StyleSheet.create({
         marginHorizontal: 24,
         marginTop: 24,
         marginBottom: 24,
+        position: 'relative',
+    },
+    switchPill: {
+        position: 'absolute',
+        top: 4,
+        bottom: 4,
+        borderRadius: 26,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+        elevation: 2,
     },
     switchButton: {
         flex: 1,
         paddingVertical: 12,
         alignItems: 'center',
         borderRadius: 26,
+        zIndex: 1,
     },
     switchText: {
         fontWeight: '600',
@@ -894,6 +1144,7 @@ const styles = StyleSheet.create({
     inputGroupError: {
         borderColor: '#ff3b30',
         borderWidth: 1.5,
+        backgroundColor: '#fff8f8',
     },
     inputIcon: {
         paddingLeft: 16,
@@ -903,7 +1154,7 @@ const styles = StyleSheet.create({
     input: {
         flex: 1,
         paddingVertical: 16,
-        paddingRight: 16,
+        paddingHorizontal: 12,
         fontSize: 15,
         color: '#333',
     },
@@ -913,8 +1164,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     countryCode: {
-        paddingLeft: 0,
-        paddingRight: 8,
+        paddingLeft: 12,
         justifyContent: 'center',
     },
     countryText: {
@@ -922,10 +1172,16 @@ const styles = StyleSheet.create({
         color: '#333',
         fontSize: 15,
     },
+    countryDivider: {
+        width: 1,
+        height: 20,
+        backgroundColor: '#ddd',
+        marginLeft: 10,
+    },
     phoneInput: {
         flex: 1,
         paddingVertical: 16,
-        paddingRight: 16,
+        paddingHorizontal: 12,
         fontSize: 15,
         color: '#333',
     },
@@ -935,7 +1191,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingVertical: 16,
-        paddingRight: 16,
+        paddingHorizontal: 12,
     },
     dateInputText: {
         fontSize: 15,
@@ -947,14 +1203,19 @@ const styles = StyleSheet.create({
         color: '#999',
     },
     passwordToggle: {
-        paddingRight: 16,
+        paddingHorizontal: 16,
+    },
+    errorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginBottom: 12,
+        marginTop: -8,
+        marginLeft: 12,
     },
     errorText: {
         color: '#ff3b30',
         fontSize: 12,
-        marginBottom: 12,
-        marginTop: -8,
-        marginLeft: 12,
     },
     button: {
         paddingVertical: 16,
@@ -966,6 +1227,9 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 8,
         elevation: 4,
+    },
+    buttonDisabled: {
+        opacity: 0.6,
     },
     buttonText: {
         color: '#fff',
@@ -980,136 +1244,134 @@ const styles = StyleSheet.create({
         color: '#666',
         fontSize: 14,
     },
-    // Modal Styles
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
+    // ---- Date picker bottom sheet ----
+    modalBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
     },
-    modalContent: {
+    sheetContent: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
         backgroundColor: '#fff',
-        borderRadius: 24,
-        width: width - 40,
-        maxHeight: height * 0.8,
-        overflow: 'hidden',
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        paddingBottom: Platform.OS === 'ios' ? 28 : 16,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 20,
-        elevation: 10,
+        shadowOffset: { width: 0, height: -6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 16,
+        elevation: 12,
     },
-    modalHeader: {
+    sheetHandle: {
+        width: 40,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#e0e0e0',
+        alignSelf: 'center',
+        marginTop: 10,
+        marginBottom: 6,
+    },
+    sheetHeader: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-    },
-    modalTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#fff',
-    },
-    modalClose: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.2)',
+        paddingVertical: 10,
+    },
+    sheetTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#222',
+    },
+    sheetClose: {
+        position: 'absolute',
+        right: 16,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#f0f0f0',
     },
     selectedDateContainer: {
         alignItems: 'center',
-        paddingVertical: 16,
+        paddingVertical: 14,
         borderBottomWidth: 1,
         borderBottomColor: '#f0f0f0',
-    },
-    selectedDateLabel: {
-        fontSize: 12,
-        color: '#999',
-        textTransform: 'uppercase',
-        letterSpacing: 0.5,
-        marginBottom: 4,
+        gap: 8,
     },
     selectedDateText: {
-        fontSize: 18,
+        fontSize: 19,
         fontWeight: '700',
     },
-    ageText: {
-        fontSize: 13,
-        color: '#666',
-        marginTop: 4,
-    },
-    pickerTabs: {
+    agePill: {
         flexDirection: 'row',
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    pickerTab: {
-        flex: 1,
-        paddingVertical: 14,
         alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 14,
     },
-    pickerTabText: {
-        fontSize: 15,
-        color: '#666',
+    agePillText: {
+        fontSize: 12,
+        fontWeight: '600',
     },
-    pickerContainer: {
-        height: 280,
+    pickerRow: {
+        flexDirection: 'row',
+        height: PICKER_ROW_HEIGHT,
+        paddingHorizontal: 8,
+        position: 'relative',
+    },
+    pickerHighlight: {
+        position: 'absolute',
+        left: 8,
+        right: 8,
+        top: (PICKER_ROW_HEIGHT - ITEM_HEIGHT) / 2,
+        height: ITEM_HEIGHT,
+        borderRadius: 10,
+        borderTopWidth: 1,
+        borderBottomWidth: 1,
+    },
+    pickerColumn: {
+        flex: 1,
+        alignItems: 'center',
     },
     pickerScroll: {
         flex: 1,
-    },
-    pickerContent: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
+        width: '100%',
     },
     pickerItem: {
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 12,
-        marginVertical: 2,
+        height: ITEM_HEIGHT,
+        justifyContent: 'center',
         alignItems: 'center',
-        position: 'relative',
+        width: '100%',
     },
     pickerItemText: {
-        fontSize: 16,
-        color: '#333',
+        fontSize: 15,
+        color: '#999',
     },
-    pickerSelectedIndicator: {
-        position: 'absolute',
-        right: 16,
-        top: '50%',
-        marginTop: -3,
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-    },
-    modalFooter: {
+    sheetFooter: {
         flexDirection: 'row',
         gap: 12,
         padding: 16,
         borderTopWidth: 1,
         borderTopColor: '#f0f0f0',
     },
-    modalButton: {
+    sheetButton: {
         flex: 1,
-        paddingVertical: 12,
+        paddingVertical: 13,
         borderRadius: 12,
         alignItems: 'center',
     },
-    modalButtonCancel: {
+    sheetButtonCancel: {
         backgroundColor: '#f0f0f0',
     },
-    modalButtonCancelText: {
+    sheetButtonCancelText: {
         color: '#666',
         fontWeight: '600',
     },
-    modalButtonConfirm: {
-        backgroundColor: '#0177b8',
-    },
-    modalButtonConfirmText: {
+    sheetButtonConfirmText: {
         color: '#fff',
         fontWeight: '600',
     },

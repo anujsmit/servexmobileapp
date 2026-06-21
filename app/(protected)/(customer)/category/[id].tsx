@@ -1,4 +1,5 @@
 // app/(protected)/(customer)/category/[id].tsx
+
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -8,21 +9,29 @@ import {
     TouchableOpacity,
     Image,
     ActivityIndicator,
-    TextInput,
     RefreshControl,
+    Dimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
-import { MaterialIcons, Ionicons, Feather } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
-interface PlatformService {
+const { width } = Dimensions.get('window');
+const CARD_WIDTH = (width - 52) / 2;
+
+// ============================================
+// TYPES
+// ============================================
+
+interface SubCategory {
     id: string;
     name: string;
     description: string | null;
-    price: string;
     imageUrl: string | null;
-    duration_minutes: number | null;
     isActive: boolean;
+    isPopular: boolean;
+    displayOrder: number;
+    itemCount: number;
 }
 
 interface CategoryInfo {
@@ -31,7 +40,12 @@ interface CategoryInfo {
     description: string | null;
     iconUrl: string | null;
     iconColor: string;
+    subCategories: SubCategory[];
 }
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
 
 const getInitials = (name: string): string => {
     if (!name) return 'SR';
@@ -43,17 +57,19 @@ const getInitials = (name: string): string => {
         .substring(0, 2);
 };
 
+// ============================================
+// MAIN COMPONENT
+// ============================================
+
 export default function CategoryServicesScreen() {
     const { id, name, serviceId } = useLocalSearchParams();
     const router = useRouter();
     const navigation = useNavigation();
     
-    const [services, setServices] = useState<PlatformService[]>([]);
     const [categoryInfo, setCategoryInfo] = useState<CategoryInfo | null>(null);
+    const [subCategories, setSubCategories] = useState<SubCategory[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [filteredServices, setFilteredServices] = useState<PlatformService[]>([]);
 
     useEffect(() => {
         navigation.setOptions({
@@ -65,38 +81,32 @@ export default function CategoryServicesScreen() {
     }, [name]);
 
     useEffect(() => {
-        fetchCategoryServices();
+        fetchCategoryWithSubCategories();
     }, [id, serviceId]);
 
-    useEffect(() => {
-        if (searchQuery.trim()) {
-            const filtered = services.filter(service =>
-                service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (service.description && service.description.toLowerCase().includes(searchQuery.toLowerCase()))
-            );
-            setFilteredServices(filtered);
-        } else {
-            setFilteredServices(services);
-        }
-    }, [searchQuery, services]);
-
-    const fetchCategoryServices = async () => {
+    const fetchCategoryWithSubCategories = async () => {
         setLoading(true);
         try {
-            const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services/category/${serviceId || id}`;
-            const response = await fetch(url);
+            const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/public/categories/${serviceId || id}`;
+            console.log('Fetching category from:', url);
+            
+            const response = await fetch(url, {
+                headers: {
+                    'ngrok-skip-browser-warning': 'true',
+                },
+            });
             const data = await response.json();
 
             if (response.ok && data.success) {
-                setCategoryInfo(data.category);
-                setServices(data.services || []);
-                setFilteredServices(data.services || []);
+                const category = data.category;
+                setCategoryInfo(category);
+                setSubCategories(category.subCategories || []);
             } else {
-                console.log('Failed to fetch services:', data.message);
-                setServices([]);
+                console.log('Failed to fetch category:', data.message);
+                setSubCategories([]);
             }
         } catch (error) {
-            console.error('Error fetching category services:', error);
+            console.error('Error fetching category:', error);
         } finally {
             setLoading(false);
         }
@@ -104,20 +114,19 @@ export default function CategoryServicesScreen() {
 
     const onRefresh = async () => {
         setRefreshing(true);
-        await fetchCategoryServices();
+        await fetchCategoryWithSubCategories();
         setRefreshing(false);
     };
 
-    const handleServicePress = (service: PlatformService) => {
+    const handleSubCategoryPress = (subCategory: SubCategory) => {
         router.push({
-            pathname: '/service-details/[id]',
+            pathname: '/sub-category/[id]',
             params: {
-                id: service.id,
-                name: service.name,
-                price: service.price,
-                description: service.description || '',
-                imageUrl: service.imageUrl || '',
+                id: subCategory.id,
+                name: subCategory.name,
                 categoryName: categoryInfo?.name,
+                categoryColor: categoryInfo?.iconColor,
+                categoryId: categoryInfo?.id,
             },
         });
     };
@@ -126,78 +135,82 @@ export default function CategoryServicesScreen() {
         return categoryInfo?.iconColor || '#e67e22';
     };
 
-    const renderServiceCard = (service: PlatformService) => {
-        const categoryColor = getCategoryColor();
-        const initials = getInitials(service.name);
-        
+    const renderSubCategoryCard = (subCategory: SubCategory) => {
+        const color = getCategoryColor();
+        const initials = getInitials(subCategory.name);
+        const hasItems = subCategory.itemCount > 0;
+        const firstLetter = subCategory.name.charAt(0).toUpperCase();
+
         return (
             <TouchableOpacity
-                key={service.id}
-                style={styles.serviceCard}
+                key={subCategory.id}
+                style={[
+                    styles.subCategoryCard,
+                    !hasItems && styles.subCategoryCardDisabled,
+                ]}
                 activeOpacity={0.7}
-                onPress={() => handleServicePress(service)}
+                onPress={() => handleSubCategoryPress(subCategory)}
+                disabled={!hasItems}
             >
-                <View style={styles.cardMainContent}>
-                    <View style={styles.serviceImageContainer}>
-                        {service.imageUrl ? (
-                            <Image 
-                                source={{ uri: service.imageUrl }} 
-                                style={styles.serviceImage}
-                                resizeMode="cover"
-                            />
-                        ) : (
-                            <View style={[styles.serviceImagePlaceholder, { backgroundColor: categoryColor + '15' }]}>
-                                <Text style={[styles.serviceInitials, { color: categoryColor }]}>
-                                    {initials}
-                                </Text>
-                            </View>
-                        )}
-                    </View>
-
-                    <View style={styles.serviceInfo}>
-                        <Text style={styles.serviceName} numberOfLines={1}>
-                            {service.name}
-                        </Text>
-                        <Text style={styles.serviceDescription} numberOfLines={2}>
-                            {service.description || 'Professional service at your doorstep'}
-                        </Text>
-                        <View style={styles.serviceFooter}>
-                            <View>
-                                <Text style={styles.priceLabel}>Starting from</Text>
-                                <Text style={styles.servicePrice}>
-                                    रु {parseFloat(service.price || '0').toLocaleString()}
-                                </Text>
-                            </View>
-                            {service.duration_minutes && (
-                                <View style={styles.durationBadge}>
-                                    <Ionicons name="time-outline" size={12} color="#64748b" />
-                                    <Text style={styles.durationText}>
-                                        {service.duration_minutes} mins
-                                    </Text>
-                                </View>
-                            )}
+                <View style={styles.subCategoryIconContainer}>
+                    {subCategory.imageUrl ? (
+                        <Image
+                            source={{ uri: subCategory.imageUrl }}
+                            style={styles.subCategoryIcon}
+                            resizeMode="cover"
+                        />
+                    ) : (
+                        <View style={[styles.subCategoryIconPlaceholder, { backgroundColor: color + '15' }]}>
+                            <Text style={[styles.subCategoryInitials, { color }]}>
+                                {firstLetter}
+                            </Text>
                         </View>
+                    )}
+                    {subCategory.isPopular && (
+                        <View style={[styles.popularBadge, { backgroundColor: color }]}>
+                            <Ionicons name="star" size={10} color="#fff" />
+                        </View>
+                    )}
+                </View>
+
+                <View style={styles.subCategoryInfo}>
+                    <Text style={styles.subCategoryName} numberOfLines={1}>
+                        {subCategory.name}
+                    </Text>
+                    {subCategory.description && (
+                        <Text style={styles.subCategoryDescription} numberOfLines={2}>
+                            {subCategory.description}
+                        </Text>
+                    )}
+                    <View style={styles.subCategoryFooter}>
+                        <Text style={styles.itemCountText}>
+                            {subCategory.itemCount} {subCategory.itemCount === 1 ? 'service' : 'services'}
+                        </Text>
+                        <Ionicons 
+                            name="chevron-forward" 
+                            size={14} 
+                            color={hasItems ? color : '#cbd5e1'} 
+                        />
                     </View>
                 </View>
 
-                <View style={[styles.bookButton, { backgroundColor: categoryColor }]}>
-                    <Text style={styles.bookButtonText}>Book</Text>
-                    <Ionicons name="arrow-forward" size={14} color="#fff" />
-                </View>
+                {!hasItems && (
+                    <View style={styles.comingSoonBadge}>
+                        <Text style={styles.comingSoonText}>Coming Soon</Text>
+                    </View>
+                )}
             </TouchableOpacity>
         );
     };
 
     const renderCategoryHeader = () => {
-        const categoryColor = getCategoryColor();
+        const color = getCategoryColor();
         const categoryInitials = getInitials(categoryInfo?.name || (name as string));
+        const firstLetter = (categoryInfo?.name || (name as string))?.charAt(0).toUpperCase() || '?';
         
         return (
-            <LinearGradient
-                colors={[categoryColor + '08', '#ffffff']}
-                style={styles.headerContainer}
-            >
-                <View style={[styles.categoryIconWrapper, { borderColor: categoryColor + '20' }]}>
+            <View style={styles.headerContainer}>
+                <View style={[styles.categoryIconWrapper, { borderColor: color + '30' }]}>
                     {categoryInfo?.iconUrl ? (
                         <Image 
                             source={{ uri: categoryInfo.iconUrl }} 
@@ -205,9 +218,11 @@ export default function CategoryServicesScreen() {
                             resizeMode="contain"
                         />
                     ) : (
-                        <Text style={[styles.categoryInitials, { color: categoryColor }]}>
-                            {categoryInitials}
-                        </Text>
+                        <View style={[styles.categoryIconFallback, { backgroundColor: color + '15' }]}>
+                            <Text style={[styles.categoryIconText, { color }]}>
+                                {firstLetter}
+                            </Text>
+                        </View>
                     )}
                 </View>
                 <Text style={styles.categoryName}>{categoryInfo?.name || name}</Text>
@@ -216,49 +231,40 @@ export default function CategoryServicesScreen() {
                 )}
                 <View style={styles.statsContainer}>
                     <View style={styles.statItem}>
-                        <MaterialIcons name="handyman" size={16} color={categoryColor} />
+                        <MaterialIcons name="folder" size={16} color={color} />
                         <Text style={styles.statText}>
-                            {services.length} {services.length === 1 ? 'Service' : 'Services'}
+                            {subCategories.length} {subCategories.length === 1 ? 'Category' : 'Categories'}
                         </Text>
                     </View>
                     <View style={styles.statDivider} />
                     <View style={styles.statItem}>
-                        <MaterialIcons name="star" size={16} color="#fbbf24" />
-                        <Text style={styles.statText}>Trusted Pros</Text>
+                        <MaterialIcons name="handyman" size={16} color={color} />
+                        <Text style={styles.statText}>
+                            {subCategories.reduce((acc, sub) => acc + sub.itemCount, 0)} Services
+                        </Text>
                     </View>
                 </View>
-            </LinearGradient>
+            </View>
         );
     };
-
-    const renderSearchBar = () => (
-        <View style={styles.searchContainer}>
-            <View style={styles.searchBar}>
-                <Feather name="search" size={18} color="#94a3b8" />
-                <TextInput
-                    style={styles.searchInput}
-                    placeholder={`Search ${categoryInfo?.name || name} services...`}
-                    placeholderTextColor="#94a3b8"
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                />
-                {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchQuery('')}>
-                        <Ionicons name="close-circle" size={18} color="#94a3b8" />
-                    </TouchableOpacity>
-                )}
-            </View>
-        </View>
-    );
 
     if (loading && !refreshing) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#e67e22" />
-                <Text style={styles.loadingText}>Loading services...</Text>
+                <Text style={styles.loadingText}>Loading categories...</Text>
             </View>
         );
     }
+
+    // Split sub-categories into pairs for 2-column grid
+    const renderSubCategoriesInPairs = () => {
+        const pairs = [];
+        for (let i = 0; i < subCategories.length; i += 2) {
+            pairs.push(subCategories.slice(i, i + 2));
+        }
+        return pairs;
+    };
 
     return (
         <ScrollView
@@ -269,27 +275,99 @@ export default function CategoryServicesScreen() {
             }
         >
             {renderCategoryHeader()}
-            {renderSearchBar()}
 
-            <View style={styles.servicesSection}>
+            <View style={styles.subCategoriesSection}>
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>
-                        Available Services
+                        Sub-Categories
                     </Text>
-                    <Text style={styles.serviceCount}>{filteredServices.length} options</Text>
+                    <Text style={styles.serviceCount}>
+                        {subCategories.filter(s => s.itemCount > 0).length} available
+                    </Text>
                 </View>
 
-                {filteredServices.length === 0 ? (
+                {subCategories.length === 0 ? (
                     <View style={styles.emptyContainer}>
                         <MaterialIcons name="search-off" size={48} color="#cbd5e1" />
-                        <Text style={styles.emptyTitle}>No services found</Text>
-                        <Text style={styles.emptySubtitle}>
-                            {searchQuery ? 'Try a different search term' : 'No services available in this category yet'}
-                        </Text>
+                        <Text style={styles.emptyTitle}>No sub-categories found</Text>
+                        <Text style={styles.emptySubtitle}>No services available in this category yet</Text>
                     </View>
                 ) : (
-                    <View style={styles.servicesList}>
-                        {filteredServices.map(renderServiceCard)}
+                    <View style={styles.subCategoriesGrid}>
+                        {renderSubCategoriesInPairs().map((pair, index) => (
+                            <View key={`row-${index}`} style={styles.gridRow}>
+                                {pair.map((subCategory) => {
+                                    const hasItems = subCategory.itemCount > 0;
+                                    const color = getCategoryColor();
+                                    const firstLetter = subCategory.name.charAt(0).toUpperCase();
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={subCategory.id}
+                                            style={[
+                                                styles.subCategoryCard,
+                                                !hasItems && styles.subCategoryCardDisabled,
+                                            ]}
+                                            activeOpacity={0.7}
+                                            onPress={() => handleSubCategoryPress(subCategory)}
+                                            disabled={!hasItems}
+                                        >
+                                            <View style={styles.subCategoryIconContainer}>
+                                                {subCategory.imageUrl ? (
+                                                    <Image
+                                                        source={{ uri: subCategory.imageUrl }}
+                                                        style={styles.subCategoryIcon}
+                                                        resizeMode="cover"
+                                                    />
+                                                ) : (
+                                                    <View style={[styles.subCategoryIconPlaceholder, { backgroundColor: color + '15' }]}>
+                                                        <Text style={[styles.subCategoryInitials, { color }]}>
+                                                            {firstLetter}
+                                                        </Text>
+                                                    </View>
+                                                )}
+                                                {subCategory.isPopular && (
+                                                    <View style={[styles.popularBadge, { backgroundColor: color }]}>
+                                                        <Ionicons name="star" size={10} color="#fff" />
+                                                    </View>
+                                                )}
+                                            </View>
+
+                                            <View style={styles.subCategoryInfo}>
+                                                <Text style={styles.subCategoryName} numberOfLines={1}>
+                                                    {subCategory.name}
+                                                </Text>
+                                                {subCategory.description && (
+                                                    <Text style={styles.subCategoryDescription} numberOfLines={2}>
+                                                        {subCategory.description}
+                                                    </Text>
+                                                )}
+                                                <View style={styles.subCategoryFooter}>
+                                                    <Text style={styles.itemCountText}>
+                                                        {subCategory.itemCount} {subCategory.itemCount === 1 ? 'service' : 'services'}
+                                                    </Text>
+                                                    <Ionicons 
+                                                        name="chevron-forward" 
+                                                        size={14} 
+                                                        color={hasItems ? color : '#cbd5e1'} 
+                                                    />
+                                                </View>
+                                            </View>
+
+                                            {!hasItems && (
+                                                <View style={styles.comingSoonBadge}>
+                                                    <Text style={styles.comingSoonText}>Coming Soon</Text>
+                                                </View>
+                                            )}
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                                {/* Fill empty space if odd number */}
+                                {pair.length === 1 && (
+                                    <View style={[styles.subCategoryCard, styles.fillerCard]} />
+                                )}
+                            </View>
+                        ))}
                     </View>
                 )}
             </View>
@@ -297,16 +375,20 @@ export default function CategoryServicesScreen() {
     );
 }
 
+// ============================================
+// STYLES - CLEAN & MODERN
+// ============================================
+
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+        backgroundColor: '#f5f7fa',
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
+        backgroundColor: '#f5f7fa',
         paddingVertical: 40,
     },
     loadingText: {
@@ -320,14 +402,19 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingTop: 28,
         paddingBottom: 24,
-        borderBottomLeftRadius: 32,
-        borderBottomRightRadius: 32,
         backgroundColor: '#ffffff',
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
     },
     categoryIconWrapper: {
-        width: 86,
-        height: 86,
-        borderRadius: 43,
+        width: 80,
+        height: 80,
+        borderRadius: 40,
         backgroundColor: '#ffffff',
         justifyContent: 'center',
         alignItems: 'center',
@@ -339,13 +426,20 @@ const styles = StyleSheet.create({
         elevation: 3,
         borderWidth: 1,
     },
+    categoryIconFallback: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    categoryIconText: {
+        fontSize: 32,
+        fontWeight: '700',
+    },
     categoryIcon: {
         width: 50,
         height: 50,
-    },
-    categoryInitials: {
-        fontSize: 30,
-        fontWeight: '700',
     },
     categoryName: {
         fontSize: 24,
@@ -389,169 +483,158 @@ const styles = StyleSheet.create({
         backgroundColor: '#cbd5e1',
         marginHorizontal: 14,
     },
-    searchContainer: {
-        paddingHorizontal: 20,
-        marginTop: 12,
-        marginBottom: 4,
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
+    subCategoriesSection: {
         paddingHorizontal: 16,
-        height: 46,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        gap: 10,
-    },
-    searchInput: {
-        flex: 1,
-        fontSize: 14,
-        color: '#1e293b',
-        paddingVertical: 0,
-    },
-    servicesSection: {
-        paddingHorizontal: 20,
         paddingBottom: 40,
+        paddingTop: 16,
     },
     sectionHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginVertical: 14,
+        marginBottom: 16,
     },
     sectionTitle: {
-        fontSize: 16,
-        fontWeight: '600',
+        fontSize: 18,
+        fontWeight: '700',
         color: '#0f172a',
+        letterSpacing: -0.3,
     },
     serviceCount: {
-        fontSize: 12,
+        fontSize: 13,
         color: '#94a3b8',
+        fontWeight: '500',
     },
-    servicesList: {
-        gap: 14,
+    subCategoriesGrid: {
+        gap: 12,
     },
-    serviceCard: {
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 14,
+    gridRow: {
         flexDirection: 'row',
-        alignItems: 'center',
         justifyContent: 'space-between',
+        gap: 12,
+    },
+    subCategoryCard: {
+        flex: 1,
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 16,
         borderWidth: 1,
         borderColor: '#f1f5f9',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.03,
+        shadowOpacity: 0.04,
         shadowRadius: 6,
-        elevation: 1,
-        gap: 12,
-    },
-    cardMainContent: {
-        flex: 1,
-        flexDirection: 'row',
+        elevation: 2,
         alignItems: 'center',
-        gap: 12,
+        position: 'relative',
+        maxWidth: CARD_WIDTH,
     },
-    serviceImageContainer: {
-        width: 76,
-        height: 76,
-        borderRadius: 14,
-        overflow: 'hidden',
+    fillerCard: {
+        backgroundColor: 'transparent',
+        borderWidth: 0,
+        shadowOpacity: 0,
+        elevation: 0,
     },
-    serviceImage: {
+    subCategoryCardDisabled: {
+        opacity: 0.6,
+    },
+    subCategoryIconContainer: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        marginBottom: 12,
+        position: 'relative',
+    },
+    subCategoryIcon: {
         width: '100%',
         height: '100%',
+        borderRadius: 36,
     },
-    serviceImagePlaceholder: {
+    subCategoryIconPlaceholder: {
         width: '100%',
         height: '100%',
+        borderRadius: 36,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    serviceInitials: {
-        fontSize: 24,
+    subCategoryInitials: {
+        fontSize: 26,
         fontWeight: '700',
     },
-    serviceInfo: {
-        flex: 1,
+    popularBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        width: 22,
+        height: 22,
+        borderRadius: 11,
         justifyContent: 'center',
-        gap: 4,
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#ffffff',
     },
-    serviceName: {
-        fontSize: 15,
-        fontWeight: '700',
+    subCategoryInfo: {
+        alignItems: 'center',
+        width: '100%',
+    },
+    subCategoryName: {
+        fontSize: 14,
+        fontWeight: '600',
         color: '#0f172a',
-        letterSpacing: -0.2,
+        textAlign: 'center',
+        marginBottom: 2,
     },
-    serviceDescription: {
+    subCategoryDescription: {
         fontSize: 12,
         color: '#64748b',
+        textAlign: 'center',
         lineHeight: 16,
+        marginBottom: 8,
     },
-    serviceFooter: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginTop: 2,
-    },
-    priceLabel: {
-        fontSize: 9,
-        color: '#94a3b8',
-    },
-    servicePrice: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: '#e67e22',
-    },
-    durationBadge: {
+    subCategoryFooter: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 4,
-        backgroundColor: '#f1f5f9',
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 10,
     },
-    durationText: {
-        fontSize: 10,
-        color: '#64748b',
+    itemCountText: {
+        fontSize: 12,
+        color: '#94a3b8',
         fontWeight: '500',
     },
-    bookButton: {
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        borderRadius: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
-        gap: 4,
+    comingSoonBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        backgroundColor: '#f1f5f9',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 10,
     },
-    bookButtonText: {
-        color: '#ffffff',
-        fontSize: 12,
+    comingSoonText: {
+        fontSize: 8,
+        color: '#94a3b8',
         fontWeight: '600',
+        textTransform: 'uppercase',
     },
     emptyContainer: {
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 40,
+        paddingVertical: 60,
         backgroundColor: '#ffffff',
-        borderRadius: 20,
-        marginTop: 10,
+        borderRadius: 16,
         borderWidth: 1,
         borderColor: '#f1f5f9',
-    },
-    emptyTitle: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#0f172a',
         marginTop: 10,
     },
+    emptyTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#0f172a',
+        marginTop: 12,
+    },
     emptySubtitle: {
-        fontSize: 12,
+        fontSize: 13,
         color: '#94a3b8',
         marginTop: 4,
         textAlign: 'center',

@@ -14,11 +14,12 @@ import {
 } from '../../../../lib/mistriDashboardTokens';
 import { SafeAreaContainer } from '../../../../components/SafeAreaContainer';
 import { PageTitle } from '../../../../components/PageTitle';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { useMistriAcceptedJobsQuery, useMistriProfileQuery, MistriJob } from '../../../../hooks/queries';
 import { useRouter } from 'expo-router';
 import { useServices } from '../../../../context/ServicesContext';
 import { useMistriTradeTheme } from '../../../../context/MistriTradeThemeContext';
+
 type SortOrder = 'newest' | 'oldest';
 type JobFilter = 'all' | 'active' | 'completed';
 
@@ -37,8 +38,8 @@ export default function MyJobsScreen() {
     const { data: profile } = useMistriProfileQuery();
     // Only poll when mistri is available (not unavailable or on_work)
     const shouldPoll = profile?.availabilityStatus === 'available';
-    const { data: jobs = [], isLoading, error } = useMistriAcceptedJobsQuery({ enablePolling: shouldPoll });
-    const { services } = useServices();
+    const { data: jobs = [], isLoading, error, refetch } = useMistriAcceptedJobsQuery({ enablePolling: shouldPoll });
+    const { activeServices } = useServices();
     const [jobFilter, setJobFilter] = useState<JobFilter>('all');
     const [filterType, setFilterType] = useState<string>('all');
     const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
@@ -48,7 +49,7 @@ export default function MyJobsScreen() {
         let filtered = jobs;
 
         if (jobFilter === 'active') {
-            filtered = filtered.filter(job => job.status === 'assigned');
+            filtered = filtered.filter(job => job.status === 'assigned' || job.status === 'pending');
         } else if (jobFilter === 'completed') {
             filtered = filtered.filter(job => job.status === 'completed');
         }
@@ -82,15 +83,30 @@ export default function MyJobsScreen() {
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'pending':
-                return DC.muted;
+                return '#f59e0b';
             case 'assigned':
-                return DC.text;
+                return '#0284c7';
             case 'completed':
                 return trade.accent;
             case 'canceled':
-                return '#b91c1c';
+                return '#ef4444';
             default:
                 return DC.muted;
+        }
+    };
+
+    const getStatusBgColor = (status: string) => {
+        switch (status) {
+            case 'pending':
+                return '#fef3c7';
+            case 'assigned':
+                return '#e0f2fe';
+            case 'completed':
+                return trade.accentSoft;
+            case 'canceled':
+                return '#fee2e2';
+            default:
+                return DC.surfaceMuted;
         }
     };
 
@@ -106,11 +122,13 @@ export default function MyJobsScreen() {
 
     const renderFilterButton = (type: string, label: string) => (
         <TouchableOpacity
+            key={type}
             style={[
                 styles.filterButton,
                 filterType === type && { backgroundColor: trade.accent, borderColor: trade.accent },
             ]}
             onPress={() => setFilterType(type)}
+            activeOpacity={0.7}
         >
             <Text style={[
                 styles.filterButtonText,
@@ -123,11 +141,13 @@ export default function MyJobsScreen() {
 
     const renderSortButton = (order: SortOrder, label: string) => (
         <TouchableOpacity
+            key={order}
             style={[
                 styles.sortButton,
                 sortOrder === order && { backgroundColor: trade.accent, borderColor: trade.accent },
             ]}
             onPress={() => setSortOrder(order)}
+            activeOpacity={0.7}
         >
             <Text style={[
                 styles.sortButtonText,
@@ -146,6 +166,9 @@ export default function MyJobsScreen() {
     };
 
     const renderJobItem = ({ item }: { item: MistriJob }) => {
+        const statusColor = getStatusColor(item.status);
+        const statusBgColor = getStatusBgColor(item.status);
+        
         return (
             <TouchableOpacity
                 style={styles.jobCard}
@@ -157,32 +180,33 @@ export default function MyJobsScreen() {
                         <MaterialIcons name="build" size={20} color={trade.accent} />
                     </View>
                     <View style={styles.jobInfo}>
-                        <Text style={styles.jobType}>
+                        <Text style={styles.jobType} numberOfLines={1}>
                             {item.type.charAt(0).toUpperCase() + item.type.slice(1)}
                         </Text>
                         <Text style={styles.jobCustomerHint} numberOfLines={1}>
                             {item.customerName}
                         </Text>
                     </View>
-                    <View style={styles.statusBadge}>
-                        <Text
-                            style={[
-                                styles.statusText,
-                                { color: getStatusColor(item.status) },
-                            ]}
-                        >
-                            {item.status}
+                    <View style={[styles.statusBadge, { backgroundColor: statusBgColor }]}>
+                        <Text style={[styles.statusText, { color: statusColor }]}>
+                            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
                         </Text>
                     </View>
                 </View>
 
-                <Text style={styles.address}>{item.address}</Text>
+                <Text style={styles.address} numberOfLines={2}>
+                    <Ionicons name="location-outline" size={14} color={DC.muted} />
+                    {' '}{item.address}
+                </Text>
 
                 <View style={styles.timestampContainer}>
-                    <Text style={styles.date}>Requested: {formatDate(item.createdAt)}</Text>
+                    <View style={styles.dateRow}>
+                        <Ionicons name="calendar-outline" size={14} color={DC.muted} />
+                        <Text style={styles.date}>Requested: {formatDate(item.createdAt)}</Text>
+                    </View>
                     {item.assignedAt && (
                         <View style={styles.acceptedInfo}>
-                            <MaterialIcons name="check-circle" size={14} color={trade.accent} />
+                            <Ionicons name="checkmark-circle" size={14} color={trade.accent} />
                             <Text style={[styles.acceptedText, { color: trade.accent }]}>
                                 Accepted {formatDate(item.assignedAt)}
                             </Text>
@@ -190,9 +214,16 @@ export default function MyJobsScreen() {
                     )}
                 </View>
 
-                <View style={styles.viewDetailsHint}>
-                    <Text style={[styles.viewDetailsText, { color: trade.accent }]}>Tap to view job details</Text>
-                    <MaterialIcons name="arrow-forward-ios" size={14} color={DC.muted} />
+                <View style={styles.jobFooter}>
+                    <View style={styles.priceContainer}>
+                        <Text style={[styles.priceText, { color: trade.accent }]}>
+                            NPR {item.paymentAmount ? parseInt(item.paymentAmount).toLocaleString() : '0'}
+                        </Text>
+                    </View>
+                    <View style={styles.viewDetailsHint}>
+                        <Text style={[styles.viewDetailsText, { color: trade.accent }]}>View Details</Text>
+                        <Ionicons name="arrow-forward" size={14} color={trade.accent} />
+                    </View>
                 </View>
             </TouchableOpacity>
         );
@@ -248,7 +279,7 @@ export default function MyJobsScreen() {
                         onPress={() => setJobFilter('active')}
                         activeOpacity={0.7}
                     >
-                        <View style={[styles.filterDot, { backgroundColor: trade.accent }]} />
+                        <View style={[styles.filterDot, { backgroundColor: '#0284c7' }]} />
                         <Text
                             style={[
                                 styles.filterChipText,
@@ -256,7 +287,7 @@ export default function MyJobsScreen() {
                                 jobFilter === 'active' && jobsBrand.filterTextOn,
                             ]}
                         >
-                            Active ({jobs.filter(j => j.status === 'assigned').length})
+                            Active ({jobs.filter(j => j.status === 'assigned' || j.status === 'pending').length})
                         </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -268,7 +299,7 @@ export default function MyJobsScreen() {
                         onPress={() => setJobFilter('completed')}
                         activeOpacity={0.7}
                     >
-                        <View style={[styles.filterDot, { backgroundColor: DC.muted }]} />
+                        <View style={[styles.filterDot, { backgroundColor: trade.accent }]} />
                         <Text
                             style={[
                                 styles.filterChipText,
@@ -286,18 +317,19 @@ export default function MyJobsScreen() {
                 <TouchableOpacity
                     style={styles.filtersToggle}
                     onPress={() => setShowFilters(!showFilters)}
+                    activeOpacity={0.7}
                 >
                     <View style={styles.filtersToggleContent}>
-                        <MaterialIcons
-                            name="filter-list"
+                        <Ionicons
+                            name="options-outline"
                             size={20}
                             color={DC.muted}
                         />
                         <Text style={styles.filtersToggleText}>Filters & Sort</Text>
                     </View>
-                    <MaterialIcons
-                        name={showFilters ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-                        size={24}
+                    <Ionicons
+                        name={showFilters ? 'chevron-up' : 'chevron-down'}
+                        size={20}
                         color={DC.muted}
                     />
                 </TouchableOpacity>
@@ -307,17 +339,19 @@ export default function MyJobsScreen() {
                 <View style={styles.filtersContainer}>
                     <View style={styles.filterSection}>
                         <Text style={styles.filterTitle}>Service Type</Text>
-                        <View style={styles.filterButtons}>
+                        <ScrollView 
+                            horizontal 
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.filterButtons}
+                        >
                             {renderFilterButton('all', 'All')}
-                            {services.map(service => (
-                                <React.Fragment key={service.id}>
-                                    {renderFilterButton(
-                                        service.serviceName.toLowerCase(),
-                                        service.serviceName.charAt(0).toUpperCase() + service.serviceName.slice(1)
-                                    )}
-                                </React.Fragment>
+                            {activeServices.map(service => (
+                                renderFilterButton(
+                                    service.serviceName.toLowerCase(),
+                                    service.displayName
+                                )
                             ))}
-                        </View>
+                        </ScrollView>
                     </View>
 
                     <View style={styles.filterSection}>
@@ -332,13 +366,22 @@ export default function MyJobsScreen() {
 
             {error && (
                 <View style={styles.errorContainer}>
+                    <Ionicons name="alert-circle" size={24} color="#ef4444" />
                     <Text style={styles.errorText}>Failed to load jobs. Please try again.</Text>
+                    <TouchableOpacity 
+                        style={[styles.retryButton, { backgroundColor: trade.accent }]}
+                        onPress={() => refetch()}
+                    >
+                        <Text style={styles.retryButtonText}>Retry</Text>
+                    </TouchableOpacity>
                 </View>
             )}
 
             {filteredAndSortedJobs.length === 0 ? (
                 <View style={styles.empty}>
-                    <MaterialIcons name="work-outline" size={48} color={DC.muted} />
+                    <View style={[styles.emptyIconContainer, { backgroundColor: trade.accentSoft }]}>
+                        <Ionicons name="briefcase-outline" size={40} color={trade.accent} />
+                    </View>
                     <Text style={styles.emptyText}>No accepted jobs</Text>
                     <Text style={styles.emptySubtext}>
                         {jobFilter === 'completed'
@@ -377,6 +420,7 @@ const styles = StyleSheet.create({
         marginTop: 16,
         fontSize: 16,
         color: DC.muted,
+        fontWeight: '500',
     },
     listScroll: {
         flex: 1,
@@ -384,7 +428,7 @@ const styles = StyleSheet.create({
     },
     statusFiltersWrap: {
         backgroundColor: DC.surface,
-        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: 1,
         borderBottomColor: 'rgba(15, 23, 42, 0.06)',
         paddingVertical: 12,
     },
@@ -405,7 +449,9 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(15, 23, 42, 0.06)',
         gap: 6,
     },
-    filterChipActive: {},
+    filterChipActive: {
+        backgroundColor: '#ffffff',
+    },
     filterChipText: {
         fontSize: 13,
         fontWeight: '500',
@@ -413,6 +459,7 @@ const styles = StyleSheet.create({
     },
     filterChipTextActive: {
         fontWeight: '600',
+        color: DC.text,
     },
     filterDot: {
         width: 6,
@@ -421,7 +468,7 @@ const styles = StyleSheet.create({
     },
     filtersHeader: {
         backgroundColor: DC.surface,
-        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: 1,
         borderBottomColor: 'rgba(15, 23, 42, 0.06)',
     },
     filtersToggle: {
@@ -429,13 +476,13 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingVertical: 16,
+        paddingVertical: 14,
     },
     filtersToggleText: {
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: '600',
         color: DC.text,
-        marginLeft: 8,
+        marginLeft: 10,
     },
     filtersToggleContent: {
         flexDirection: 'row',
@@ -444,73 +491,87 @@ const styles = StyleSheet.create({
     filtersContainer: {
         backgroundColor: DC.canvas,
         padding: 16,
-        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: 1,
         borderBottomColor: 'rgba(15, 23, 42, 0.06)',
     },
     filterSection: {
         marginBottom: 16,
     },
     filterTitle: {
-        fontSize: 14,
-        fontWeight: '700',
+        fontSize: 13,
+        fontWeight: '600',
         color: DC.text,
         letterSpacing: -0.2,
-        marginBottom: 12,
+        marginBottom: 10,
     },
     filterButtons: {
         flexDirection: 'row',
         gap: 8,
+        paddingVertical: 2,
     },
     filterButton: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 16,
         borderWidth: 1,
         borderColor: 'rgba(15, 23, 42, 0.08)',
         backgroundColor: DC.surface,
     },
-    filterButtonActive: {},
     filterButtonText: {
         color: DC.muted,
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: '500',
     },
     filterButtonTextActive: {
         color: '#ffffff',
+        fontWeight: '600',
     },
     sortButtons: {
         flexDirection: 'row',
         gap: 8,
     },
     sortButton: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 16,
         borderWidth: 1,
         borderColor: 'rgba(15, 23, 42, 0.08)',
         backgroundColor: DC.surface,
     },
-    sortButtonActive: {},
     sortButtonText: {
         color: DC.muted,
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: '500',
     },
     sortButtonTextActive: {
         color: '#ffffff',
+        fontWeight: '600',
     },
     errorContainer: {
         margin: 20,
-        padding: 12,
+        padding: 16,
         backgroundColor: '#fee2e2',
-        borderRadius: 8,
+        borderRadius: 12,
         borderWidth: 1,
         borderColor: '#fecaca',
+        alignItems: 'center',
+        gap: 8,
     },
     errorText: {
         color: '#b91c1c',
         fontSize: 14,
         textAlign: 'center',
+    },
+    retryButton: {
+        paddingHorizontal: 20,
+        paddingVertical: 8,
+        borderRadius: 20,
+        marginTop: 4,
+    },
+    retryButtonText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '600',
     },
     empty: {
         flex: 1,
@@ -519,31 +580,39 @@ const styles = StyleSheet.create({
         padding: 40,
         backgroundColor: DC.canvas,
     },
+    emptyIconContainer: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
     emptyText: {
-        fontSize: 14,
+        fontSize: 16,
         fontWeight: '600',
         color: DC.text,
-        marginTop: 12,
-        marginBottom: 6,
+        marginBottom: 4,
     },
     emptySubtext: {
-        fontSize: 12,
+        fontSize: 13,
         color: DC.muted,
         textAlign: 'center',
-        lineHeight: 16,
+        lineHeight: 20,
     },
     listContainer: {
         paddingHorizontal: 16,
         paddingBottom: 20,
+        paddingTop: 12,
     },
     jobCard: {
         backgroundColor: DC.surface,
-        padding: 14,
+        padding: 16,
         borderRadius: 16,
-        borderCurve: 'continuous',
-        marginBottom: 10,
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(15, 23, 42, 0.05)',
+        ...MISTRI_ELEV.card,
     },
     jobHeader: {
         flexDirection: 'row',
@@ -551,10 +620,9 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     jobTypeIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: 13,
-        borderCurve: 'continuous',
+        width: 40,
+        height: 40,
+        borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: 12,
@@ -574,12 +642,10 @@ const styles = StyleSheet.create({
         marginTop: 1,
     },
     statusBadge: {
-        paddingHorizontal: 9,
+        paddingHorizontal: 10,
         paddingVertical: 4,
-        borderRadius: 10,
-        borderCurve: 'continuous',
+        borderRadius: 12,
         backgroundColor: DC.surfaceMuted,
-        boxShadow: '0 1px 4px rgba(15, 23, 42, 0.05)',
     },
     statusText: {
         fontWeight: '600',
@@ -587,10 +653,15 @@ const styles = StyleSheet.create({
         textTransform: 'capitalize',
     },
     address: {
-        fontSize: 12,
+        fontSize: 13,
         color: DC.text,
-        marginBottom: 6,
+        marginBottom: 10,
         lineHeight: 18,
+    },
+    dateRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
     },
     date: {
         fontSize: 12,
@@ -598,26 +669,40 @@ const styles = StyleSheet.create({
     },
     timestampContainer: {
         marginBottom: 12,
+        gap: 4,
     },
     acceptedInfo: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
-        marginTop: 4,
+        gap: 6,
     },
     acceptedText: {
         fontSize: 12,
         fontWeight: '500',
     },
+    jobFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(15, 23, 42, 0.05)',
+        paddingTop: 12,
+    },
+    priceContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    priceText: {
+        fontSize: 14,
+        fontWeight: '700',
+    },
     viewDetailsHint: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'flex-end',
         gap: 4,
-        marginTop: 4,
     },
     viewDetailsText: {
         fontSize: 13,
-        fontWeight: '500',
+        fontWeight: '600',
     },
 });

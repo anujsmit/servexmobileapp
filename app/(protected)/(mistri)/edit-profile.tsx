@@ -28,8 +28,9 @@ import {
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
+// Updated AVAILABILITY_OPTIONS - removed 'unavailable'
 const AVAILABILITY_OPTIONS: {
-    key: 'available' | 'unavailable' | 'on_work_available';
+    key: 'available' | 'on_work_available';
     label: string;
     shortLabel: string;
     icon: IoniconName;
@@ -38,7 +39,6 @@ const AVAILABILITY_OPTIONS: {
 }[] = [
         { key: 'available', label: 'Available', shortLabel: 'Available', icon: 'checkmark-circle', color: '#10b981', dimColor: '#d1fae5' },
         { key: 'on_work_available', label: 'On Work', shortLabel: 'On Work', icon: 'time', color: '#f59e0b', dimColor: '#fef3c7' },
-        { key: 'unavailable', label: 'Unavailable', shortLabel: 'Off', icon: 'moon', color: '#6b7280', dimColor: '#f3f4f6' },
     ];
 
 export default function EditProfileScreen() {
@@ -59,7 +59,7 @@ export default function EditProfileScreen() {
     const [showMapSelector, setShowMapSelector] = useState(false);
     const [isEditingBio, setIsEditingBio] = useState(false);
     const [isEditingProfile, setIsEditingProfile] = useState(false);
-    const [optimisticAvailability, setOptimisticAvailability] = useState<'available' | 'unavailable' | 'on_work_available' | null>(null);
+    const [optimisticAvailability, setOptimisticAvailability] = useState<'available' | 'on_work_available' | null>(null);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(24)).current;
@@ -96,23 +96,24 @@ export default function EditProfileScreen() {
         }
     }, [profile]);
 
-    useEffect(() => {
-        (async () => {
-            if (process.env.EXPO_OS !== 'web') {
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (status !== 'granted') Alert.alert('Permission required', 'Permission to access photos is needed!');
-            }
-        })();
-    }, []);
-
+    // Camera permission and photo picker - only when user taps
     const pickImage = async () => {
         try {
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            // Request camera permission only when user taps the profile photo
+            if (process.env.EXPO_OS !== 'web') {
+                const { status } = await ImagePicker.requestCameraPermissionsAsync();
+                if (status !== 'granted') {
+                    Alert.alert('Permission required', 'Camera permission is needed to take photos!');
+                    return;
+                }
+            }
+
+            const result = await ImagePicker.launchCameraAsync({
                 allowsEditing: true,
                 quality: 0.5,
                 base64: false,
             });
+            
             if (!result.canceled && result.assets.length > 0) {
                 const asset = result.assets[0];
                 const manipulatedImage = await ImageManipulator.manipulateAsync(
@@ -125,6 +126,7 @@ export default function EditProfileScreen() {
             }
         } catch (error) {
             if (__DEV__) console.error(error);
+            Alert.alert('Error', 'Failed to take photo. Please try again.');
         }
     };
 
@@ -132,7 +134,6 @@ export default function EditProfileScreen() {
         setMarkerPosition(coords);
         setLocation(`${coords.latitude.toFixed(6)},${coords.longitude.toFixed(6)}`);
     };
-
 
     const handleSave = async () => {
         if (!fullName.trim()) {
@@ -159,7 +160,7 @@ export default function EditProfileScreen() {
         }
     };
 
-    const updateAvailability = async (status: 'available' | 'unavailable' | 'on_work_available') => {
+    const updateAvailability = async (status: 'available' | 'on_work_available') => {
         setOptimisticAvailability(status);
         try {
             await updateProfile({ availabilityStatus: status });
@@ -170,9 +171,9 @@ export default function EditProfileScreen() {
         }
     };
 
-    const currentAvailability = optimisticAvailability || profile?.availabilityStatus || 'unavailable';
+    const currentAvailability = optimisticAvailability || profile?.availabilityStatus || 'available';
     const accentColor = getAccentColor();
-    const currentStatusOption = AVAILABILITY_OPTIONS.find(o => o.key === currentAvailability) || AVAILABILITY_OPTIONS[2];
+    const currentStatusOption = AVAILABILITY_OPTIONS.find(o => o.key === currentAvailability) || AVAILABILITY_OPTIONS[0];
 
     if (isLoadingProfile) {
         return (
@@ -324,7 +325,7 @@ export default function EditProfileScreen() {
                                 </View>
                             </View>
 
-                            {/* Selector pills */}
+                            {/* Selector pills - now only 2 options */}
                             <View style={{ flexDirection: 'row', gap: 8 }}>
                                 {AVAILABILITY_OPTIONS.map(option => {
                                     const isActive = currentAvailability === option.key;

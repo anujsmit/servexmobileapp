@@ -1,3 +1,5 @@
+// context/ServicesContext.tsx
+
 import React, { createContext, useContext, ReactNode, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API_BASE_URL } from '../lib/config';
@@ -8,14 +10,17 @@ import { Ionicons } from '@expo/vector-icons';
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
 /**
- * Raw service data from database
+ * Raw service category data from database (new 3-level hierarchy)
  */
-interface ServiceFromDB {
+interface ServiceCategoryFromDB {
     id: number;
-    serviceName: string;
+    name: string;                    // ✅ Changed from serviceName to name
     description: string | null;
-    mapIconColor: string | null;
+    iconUrl: string | null;          // ✅ Changed from mapIconColor to iconUrl
+    iconColor: string | null;        // ✅ Added iconColor
     isActive: boolean;
+    displayOrder: number;
+    subCategoryCount?: number;
 }
 
 /**
@@ -23,13 +28,16 @@ interface ServiceFromDB {
  */
 export interface EnrichedService {
     id: number;
-    serviceName: string;
+    serviceName: string;              // Maps from name field
+    name: string;                     // Original name field
     description: string | null;
     color: string;                    // DB color or fallback from dictionary
     icon: IoniconName;                // From dictionary
     iconSelected: IoniconName;        // From dictionary
     displayName: string;              // Formatted name from dictionary or capitalized serviceName
     isActive: boolean;
+    iconUrl: string | null;           // Custom icon URL
+    subCategoryCount?: number;
 }
 
 interface ServicesContextType {
@@ -44,42 +52,55 @@ interface ServicesContextType {
 
 const ServicesContext = createContext<ServicesContextType | undefined>(undefined);
 
-const fetchServices = async (): Promise<ServiceFromDB[]> => {
-    const response = await fetch(`${API_BASE_URL}/api/services`);
+
+// Update the fetchServices function
+const fetchServices = async (): Promise<ServiceCategoryFromDB[]> => {
+    // ✅ Use public endpoint
+    const response = await fetch(`${API_BASE_URL}/api/public/categories`);
     if (!response.ok) {
-        throw new Error('Failed to fetch services');
+        throw new Error('Failed to fetch service categories');
     }
     const data = await response.json();
-    return data.services;
+    
+    // Handle response format
+    if (data?.success && data?.categories) {
+        return data.categories;
+    }
+    return [];
 };
 
 /**
- * Enriches a service from the database with display configuration
+ * Enriches a service category from the database with display configuration
  */
-const enrichService = (dbService: ServiceFromDB): EnrichedService => {
-    const config = getServiceConfig(dbService.serviceName);
+const enrichService = (dbService: ServiceCategoryFromDB): EnrichedService => {
+    // Use name field (which exists in service_categories)
+    const serviceName = dbService.name || dbService.serviceName || 'Unnamed';
+    const config = getServiceConfig(serviceName);
 
     return {
         id: dbService.id,
-        serviceName: dbService.serviceName,
+        serviceName: serviceName,
+        name: dbService.name || serviceName,
         description: dbService.description,
         // Use DB color if available, otherwise fallback to dictionary default
-        color: dbService.mapIconColor || config.defaultColor,
+        color: dbService.iconColor || config.defaultColor,
         icon: config.icon,
         iconSelected: config.iconSelected,
         // Use dictionary display name or capitalize the service name
         displayName: config.displayName ||
-                    dbService.serviceName.charAt(0).toUpperCase() + dbService.serviceName.slice(1),
-        isActive: dbService.isActive,
+                    serviceName.charAt(0).toUpperCase() + serviceName.slice(1),
+        isActive: dbService.isActive !== false,
+        iconUrl: dbService.iconUrl || null,
+        subCategoryCount: dbService.subCategoryCount || 0,
     };
 };
 
 export const ServicesProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const { data: rawServices = [], isLoading, error } = useQuery({
-        queryKey: ['services'],
+        queryKey: ['service-categories'],
         queryFn: fetchServices,
-        staleTime: Infinity, // Services rarely change, cache forever
-        gcTime: Infinity, // Don't garbage collect
+        staleTime: 5 * 60 * 1000, // 5 minutes
+        gcTime: 10 * 60 * 1000, // 10 minutes
     });
 
     // Enrich all services with display configuration
@@ -93,7 +114,11 @@ export const ServicesProvider: React.FC<{ children: ReactNode }> = ({ children }
     }, [services]);
 
     const getServiceByName = (name: string): EnrichedService | undefined => {
-        return services.find(s => s.serviceName.toLowerCase() === name.toLowerCase());
+        if (!name) return undefined;
+        return services.find(s => 
+            s.serviceName?.toLowerCase() === name.toLowerCase() ||
+            s.name?.toLowerCase() === name.toLowerCase()
+        );
     };
 
     const getServiceColor = (name: string): string => {

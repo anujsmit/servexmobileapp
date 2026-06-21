@@ -1,4 +1,4 @@
-// app/(protected)/(customer)/dashboard.tsx - Full updated file
+// app/(protected)/(customer)/dashboard.tsx
 
 import React, {
     useMemo,
@@ -40,14 +40,21 @@ import { useServices } from '../../../context/ServicesContext';
 
 const { width: screenWidth } = Dimensions.get('window');
 
+// ============================================
+// TYPES
+// ============================================
+
 interface ServiceCategory {
     id: number;
-    serviceName: string;
+    name: string;
+    serviceName?: string;
     description?: string;
+    iconUrl?: string | null;
     customIconUrl?: string | null;
     iconColor?: string;
     mapIconColor?: string;
     isActive?: boolean;
+    subCategoryCount?: number;
 }
 
 interface PlatformService {
@@ -86,6 +93,10 @@ interface ServiceRequest {
     mistriName?: string;
     mistriPhone?: string;
 }
+
+// ============================================
+// SKELETON COMPONENTS
+// ============================================
 
 const CategorySkeleton = () => {
     const animatedValue = useRef(new Animated.Value(0.3)).current;
@@ -146,6 +157,10 @@ const PopularServiceSkeleton = () => {
     );
 };
 
+// ============================================
+// MAIN COMPONENT
+// ============================================
+
 export default function CustomerDashboard() {
     const { user, token, refreshAccessToken, logout } = useAuth();
     const { address, isLoading: locationLoading, refetch: refetchLocation } = useLocation();
@@ -154,6 +169,7 @@ export default function CustomerDashboard() {
 
     const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useCustomerRequestsQuery();
 
+    // State
     const [categories, setCategories] = useState<ServiceCategory[]>([]);
     const [popularServices, setPopularServices] = useState<PlatformService[]>([]);
     const [ad1Banners, setAd1Banners] = useState<Banner[]>([]);
@@ -165,10 +181,18 @@ export default function CustomerDashboard() {
     const [searchQuery, setSearchQuery] = useState('');
     const [showVideoModal, setShowVideoModal] = useState(false);
     const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
-    const [filteredCategories, setFilteredCategories] = useState<ServiceCategory[]>([]);
+    const [displayCategories, setDisplayCategories] = useState<ServiceCategory[]>([]);
     const [failedImages, setFailedImages] = useState<Record<number, boolean>>({});
+    const [error, setError] = useState<string | null>(null);
+
     const scrollY = useRef(new Animated.Value(0)).current;
     const scrollViewRef = useRef<ScrollView>(null);
+
+    const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:5000';
+
+    // ============================================
+    // COMPUTED VALUES
+    // ============================================
 
     const recentRequest = useMemo(() => {
         if (!requests || requests.length === 0) return null;
@@ -189,55 +213,80 @@ export default function CustomerDashboard() {
         extrapolate: 'clamp',
     });
 
+    // ============================================
+    // EFFECTS
+    // ============================================
+
     useEffect(() => {
         fetchCategories();
         fetchPopularServices();
         fetchBanners();
     }, []);
 
+    // Update display categories when search changes
     useEffect(() => {
         if (searchQuery.trim()) {
             const filtered = categories.filter(category =>
-                category.serviceName?.toLowerCase().includes(searchQuery.toLowerCase())
+                (category.name || category.serviceName || '')
+                    .toLowerCase()
+                    .includes(searchQuery.toLowerCase())
             );
-            setFilteredCategories(filtered);
+            setDisplayCategories(filtered);
         } else {
-            setFilteredCategories(categories);
+            setDisplayCategories(categories);
         }
     }, [searchQuery, categories]);
+
+    // ============================================
+    // API FUNCTIONS
+    // ============================================
 
     const fetchCategories = async () => {
         try {
             setCategoriesLoading(true);
-            const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/services`;
-            const response = await fetch(url);
+            setError(null);
+
+            const url = `${API_BASE}/api/public/categories`;
+            console.log('Fetching categories from:', url);
+
+            const response = await fetch(url, {
+                headers: {
+                    'ngrok-skip-browser-warning': 'true',
+                },
+            });
             const data = await response.json();
 
-            if (response.ok) {
-                let categoriesData = [];
-                if (Array.isArray(data)) categoriesData = data;
-                else if (Array.isArray(data.services)) categoriesData = data.services;
-                else if (Array.isArray(data.categories)) categoriesData = data.categories;
-                else if (Array.isArray(data.data)) categoriesData = data.data;
+            if (response.ok && data.success) {
+                let categoriesData = data.categories || [];
 
-                const mappedCategories = categoriesData.map(cat => ({
+                const mappedCategories = categoriesData.map((cat: any) => ({
                     id: cat.id,
-                    serviceName: cat.serviceName || cat.name,
-                    description: cat.description,
-                    customIconUrl: cat.customIconUrl || cat.custom_icon_url || null,
-                    iconColor: cat.iconColor || cat.icon_color || cat.mapIconColor || '#e67e22',
+                    name: cat.name,
+                    serviceName: cat.name,
+                    description: cat.description || null,
+                    iconUrl: cat.iconUrl || null,
+                    customIconUrl: cat.iconUrl || null,
+                    iconColor: cat.iconColor || '#e67e22',
+                    mapIconColor: cat.iconColor || '#e67e22',
                     isActive: cat.isActive !== false,
+                    subCategoryCount: cat.subCategoryCount || 0,
                 }));
 
-                const activeCategories = mappedCategories.filter(cat => cat.isActive);
-                setCategories(activeCategories);
-                setFilteredCategories(activeCategories);
+                console.log(`✅ Loaded ${mappedCategories.length} categories:`, mappedCategories.map(c => c.name).join(', '));
+
+                setCategories(mappedCategories);
+                setDisplayCategories(mappedCategories);
             } else {
+                console.error('Failed to fetch categories:', data);
+                setError('Failed to load categories');
                 setCategories([]);
+                setDisplayCategories([]);
             }
         } catch (error) {
-            console.log('Failed to fetch categories:', error);
+            console.error('Error fetching categories:', error);
+            setError('Network error. Please check your connection.');
             setCategories([]);
+            setDisplayCategories([]);
         } finally {
             setCategoriesLoading(false);
         }
@@ -246,7 +295,7 @@ export default function CustomerDashboard() {
     const fetchPopularServices = async () => {
         try {
             setPopularServicesLoading(true);
-            const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services/popular`);
+            const response = await fetch(`${API_BASE}/api/platform-services/popular`);
             const data = await response.json();
 
             if (response.ok && data.success && data.services) {
@@ -262,8 +311,8 @@ export default function CustomerDashboard() {
                 }));
                 setPopularServices(popularServicesList.slice(0, 10));
             } else {
-                console.log('Popular endpoint not found, falling back to filter all services');
-                const fallbackResponse = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services`);
+                // Fallback: filter from all services
+                const fallbackResponse = await fetch(`${API_BASE}/api/platform-services`);
                 const fallbackData = await fallbackResponse.json();
 
                 if (fallbackResponse.ok && fallbackData.categories) {
@@ -303,7 +352,7 @@ export default function CustomerDashboard() {
         try {
             setBannersLoading(true);
 
-            const ad1Response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/hero-banners/type/ad1`);
+            const ad1Response = await fetch(`${API_BASE}/api/hero-banners/type/ad1`);
             const ad1Data = await ad1Response.json();
             if (ad1Data.success && ad1Data.banners && ad1Data.banners.length > 0) {
                 setAd1Banners(ad1Data.banners);
@@ -311,7 +360,7 @@ export default function CustomerDashboard() {
                 setAd1Banners([]);
             }
 
-            const ad2Response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/hero-banners/type/ad2`);
+            const ad2Response = await fetch(`${API_BASE}/api/hero-banners/type/ad2`);
             const ad2Data = await ad2Response.json();
             if (ad2Data.success && ad2Data.banners && ad2Data.banners.length > 0) {
                 setAd2Banners(ad2Data.banners);
@@ -340,7 +389,12 @@ export default function CustomerDashboard() {
 
     const onRefresh = useCallback(() => { refreshAllData(); }, []);
 
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+
     const getInitials = (name: string) => {
+        if (!name) return 'U';
         return name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
     };
 
@@ -351,13 +405,44 @@ export default function CustomerDashboard() {
         return colors[index % colors.length];
     };
 
+    const getCategoryName = (category: ServiceCategory) => {
+        return category.name || category.serviceName || 'Unnamed';
+    };
+
+    const getStatusColor = (status: string) => {
+        const colors: Record<string, string> = {
+            'pending': '#f59e0b',
+            'assigned': '#3b82f6',
+            'completed': '#10b981',
+            'canceled': '#ef4444',
+        };
+        return colors[status] || '#94a3b8';
+    };
+
+    const getStatusLabel = (status: string) => {
+        const labels: Record<string, string> = {
+            'pending': 'Pending Approval',
+            'assigned': 'Assigned',
+            'completed': 'Completed ✅',
+            'canceled': 'Canceled',
+        };
+        return labels[status] || status;
+    };
+
+    // ============================================
+    // NAVIGATION HANDLERS
+    // ============================================
+
     const openCategory = (category: ServiceCategory) => {
+        const categoryId = category.id;
+        const categoryName = getCategoryName(category);
+
         router.push({
             pathname: '/category/[id]',
             params: {
-                id: category.id.toString(),
-                name: category.serviceName,
-                serviceId: category.id.toString()
+                id: categoryId.toString(),
+                name: categoryName,
+                serviceId: categoryId.toString()
             },
         });
     };
@@ -377,7 +462,7 @@ export default function CustomerDashboard() {
 
     const handleTrackRecentOrder = () => {
         if (recentRequest) {
-            router.push(`/requests/${recentRequest.id}`);
+            router.push(`/(protected)/(customer)/service-status/${recentRequest.id}`);
         } else {
             Alert.alert(
                 'No Recent Orders',
@@ -406,6 +491,10 @@ export default function CustomerDashboard() {
         setSelectedVideoUrl(embedUrl);
         setShowVideoModal(true);
     };
+
+    // ============================================
+    // RENDER FUNCTIONS
+    // ============================================
 
     const renderRecentOrder = () => {
         if (requestsLoading) {
@@ -441,26 +530,6 @@ export default function CustomerDashboard() {
                 </TouchableOpacity>
             );
         }
-
-        const getStatusColor = (status: string) => {
-            const colors: Record<string, string> = {
-                'pending': '#f59e0b',
-                'assigned': '#3b82f6',
-                'completed': '#10b981',
-                'canceled': '#ef4444',
-            };
-            return colors[status] || '#94a3b8';
-        };
-
-        const getStatusLabel = (status: string) => {
-            const labels: Record<string, string> = {
-                'pending': 'Pending Approval',
-                'assigned': 'Assigned',
-                'completed': 'Completed ✅',
-                'canceled': 'Canceled',
-            };
-            return labels[status] || status;
-        };
 
         const statusColor = getStatusColor(recentRequest.status);
         const serviceDisplayName = getServiceByName(recentRequest.type)?.displayName ||
@@ -674,75 +743,100 @@ export default function CustomerDashboard() {
         );
     };
 
-    const renderCategories = () => (
-        <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleContainer}>
-                    <Text style={styles.sectionTitle}>What are you looking for?</Text>
+    // ============================================
+    // RENDER CATEGORIES - CLEAN & SIMPLE
+    // ============================================
+
+    const renderCategories = () => {
+        const categoriesToShow = searchQuery.trim() ? displayCategories : categories;
+
+        return (
+            <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitleContainer}>
+                        <Text style={styles.sectionTitle}>What are you looking for?</Text>
+                    </View>
                 </View>
+
+                {categoriesLoading && !refreshing ? (
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.categoriesHorizontalScroll}
+                    >
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
+                            <CategorySkeleton key={item} />
+                        ))}
+                    </ScrollView>
+                ) : error ? (
+                    <View style={styles.errorState}>
+                        <MaterialIcons name="error-outline" size={40} color="#ef4444" />
+                        <Text style={styles.errorTitle}>{error}</Text>
+                        <TouchableOpacity style={styles.retryButton} onPress={fetchCategories}>
+                            <Text style={styles.retryButtonText}>Retry</Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : categoriesToShow.length === 0 ? (
+                    <View style={styles.emptyState}>
+                        <MaterialIcons name="search-off" size={40} color="#cbd5e1" />
+                        <Text style={styles.emptyTitle}>
+                            {searchQuery.trim() ? 'No categories match your search' : 'No categories available'}
+                        </Text>
+                    </View>
+                ) : (
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.categoriesHorizontalScroll}
+                    >
+                        {categoriesToShow.slice(0, 12).map((category, index) => {
+                            const iconColor = getCategoryColor(category, index);
+                            const categoryName = getCategoryName(category);
+                            const hasCustomIcon = category.customIconUrl && category.customIconUrl.length > 0;
+                            const isImageFailed = failedImages[category.id];
+
+                            // Get first letter of category name
+                            const firstLetter = categoryName.charAt(0).toUpperCase();
+
+                            return (
+                                <TouchableOpacity
+                                    key={category.id}
+                                    style={styles.categoryCard}
+                                    activeOpacity={0.7}
+                                    onPress={() => openCategory(category)}
+                                >
+                                    <View style={[
+                                        styles.categoryIconContainer,
+                                        { backgroundColor: iconColor + '12' }
+                                    ]}>
+                                        {hasCustomIcon && !isImageFailed ? (
+                                            <Image
+                                                source={{ uri: category.customIconUrl! }}
+                                                style={styles.categoryCustomIcon}
+                                                resizeMode="contain"
+                                                onError={() => {
+                                                    setFailedImages(prev => ({ ...prev, [category.id]: true }));
+                                                }}
+                                            />
+                                        ) : (
+                                            <View style={[styles.categoryIconFallback, { backgroundColor: iconColor + '20' }]}>
+                                                <Text style={[styles.categoryIconText, { color: iconColor }]}>
+                                                    {firstLetter}
+                                                </Text>
+                                            </View>
+                                        )}
+                                    </View>
+                                    <Text style={styles.categoryName} numberOfLines={1}>
+                                        {categoryName}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </ScrollView>
+                )}
             </View>
-
-            {categoriesLoading && !refreshing ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesHorizontalScroll}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <CategorySkeleton key={item} />)}
-                </ScrollView>
-            ) : filteredCategories.length === 0 ? (
-                <View style={styles.emptyState}>
-                    <MaterialIcons name="search-off" size={40} color="#cbd5e1" />
-                    <Text style={styles.emptyTitle}>No categories found</Text>
-                </View>
-            ) : (
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.categoriesHorizontalScroll}
-                >
-                    {filteredCategories.slice(0, 12).map((category, index) => {
-                        const iconColor = getCategoryColor(category, index);
-                        const hasCustomIcon = category.customIconUrl && category.customIconUrl.length > 0;
-                        const isImageFailed = failedImages[category.id];
-
-                        return (
-                            <TouchableOpacity
-                                key={category.id}
-                                style={styles.categoryCard}
-                                activeOpacity={0.7}
-                                onPress={() => openCategory(category)}
-                            >
-                                <View style={[
-                                    styles.categoryIconContainer,
-                                    { backgroundColor: iconColor + '15' }
-                                ]}>
-                                    {hasCustomIcon && !isImageFailed ? (
-                                        <Image
-                                            source={{ uri: category.customIconUrl! }}
-                                            style={styles.categoryCustomIcon}
-                                            resizeMode="contain"
-                                            onError={() => {
-                                                setFailedImages(prev => ({ ...prev, [category.id]: true }));
-                                            }}
-                                        />
-                                    ) : (
-                                        <LinearGradient
-                                            colors={[iconColor + '80', iconColor + '20']}
-                                            style={styles.categoryIconGradient}
-                                        >
-                                            <Text style={[styles.categoryInitialText, { color: '#fff' }]}>
-                                                {category.serviceName?.charAt(0).toUpperCase()}
-                                            </Text>
-                                        </LinearGradient>
-                                    )}
-                                </View>
-                                <Text style={styles.categoryName} numberOfLines={1}>
-                                    {category.serviceName}
-                                </Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </ScrollView>
-            )}
-        </View>
-    );
+        );
+    };
 
     const renderPopularServices = () => (
         <View style={styles.section}>
@@ -827,6 +921,10 @@ export default function CustomerDashboard() {
         </View>
     );
 
+    // ============================================
+    // MAIN RENDER
+    // ============================================
+
     return (
         <SafeAreaContainer style={styles.safeRoot} showBottomNav>
             <StatusBar backgroundColor="#ffffff" barStyle="dark-content" />
@@ -903,6 +1001,7 @@ export default function CustomerDashboard() {
                 </View>
             </Animated.ScrollView>
 
+            {/* Video Modal */}
             <Modal
                 visible={showVideoModal}
                 animationType="slide"
@@ -940,10 +1039,14 @@ export default function CustomerDashboard() {
     );
 }
 
+// ============================================
+// STYLES - CLEAN & MODERN
+// ============================================
+
 const styles = StyleSheet.create({
     safeRoot: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+        backgroundColor: '#f5f7fa',
     },
     header: {
         flexDirection: 'row',
@@ -1034,20 +1137,20 @@ const styles = StyleSheet.create({
     bannerWrapper: {
         marginHorizontal: 20,
         marginBottom: 20,
-        borderRadius: 20,
+        borderRadius: 16,
         overflow: 'hidden',
-        height: 180,
+        height: 160,
     },
     bannerSkeleton: {
-        height: 180,
+        height: 160,
         backgroundColor: '#e2e8f0',
-        borderRadius: 20,
+        borderRadius: 16,
         justifyContent: 'center',
         alignItems: 'center',
     },
     fallbackBanner: {
-        height: 180,
-        borderRadius: 20,
+        height: 160,
+        borderRadius: 16,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -1257,8 +1360,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#ffffff',
         borderRadius: 16,
-        paddingVertical: 16,
-        paddingHorizontal: 12,
+        paddingVertical: 14,
+        paddingHorizontal: 10,
         borderWidth: 1,
         borderColor: '#f1f5f9',
         shadowColor: '#0f172a',
@@ -1266,8 +1369,8 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.02,
         shadowRadius: 4,
         elevation: 1,
-        width: 88,
-        minHeight: 110,
+        width: 80,
+        minHeight: 100,
         justifyContent: 'center',
     },
     categoryCardSkeleton: {
@@ -1275,54 +1378,44 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#ffffff',
         borderRadius: 16,
-        paddingVertical: 16,
-        paddingHorizontal: 20,
+        paddingVertical: 14,
+        paddingHorizontal: 10,
         borderWidth: 1,
         borderColor: '#f1f5f9',
-        width: 88,
-        minHeight: 110,
+        width: 80,
+        minHeight: 100,
         justifyContent: 'center',
     },
     categoryIconContainer: {
-        width: 54,
-        height: 54,
+        width: 48,
+        height: 48,
         borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 12,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 1,
+        marginBottom: 8,
         overflow: 'hidden',
     },
-    categoryIconGradient: {
-        width: 54,
-        height: 54,
+    categoryIconFallback: {
+        width: 48,
+        height: 48,
         borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
     },
+    categoryIconText: {
+        fontSize: 22,
+        fontWeight: '600',
+    },
     categoryCustomIcon: {
-        width: 54,
-        height: 54,
+        width: 40,
+        height: 40,
         borderRadius: 8,
     },
-    categoryInitialText: {
-        fontSize: 22,
-        fontWeight: '700',
-        textShadowColor: 'rgba(0,0,0,0.1)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 2,
-        color: '#fff',
-    },
     categoryName: {
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: '600',
         color: '#334155',
         textAlign: 'center',
-        marginTop: 2,
     },
     popularListContainer: {
         paddingHorizontal: 20,
@@ -1331,7 +1424,7 @@ const styles = StyleSheet.create({
     popularServiceCardRow: {
         flexDirection: 'row',
         backgroundColor: '#ffffff',
-        borderRadius: 20,
+        borderRadius: 16,
         padding: 14,
         borderWidth: 1,
         borderColor: '#f0f2f5',
@@ -1344,21 +1437,21 @@ const styles = StyleSheet.create({
         gap: 14,
     },
     popularImageWrapper: {
-        width: 80,
-        height: 80,
-        borderRadius: 16,
+        width: 76,
+        height: 76,
+        borderRadius: 14,
         overflow: 'hidden',
         backgroundColor: '#f1f5f9',
     },
     popularServiceImageRow: {
         width: '100%',
         height: '100%',
-        borderRadius: 16,
+        borderRadius: 14,
     },
     popularServiceIconPlaceholderRow: {
-        width: 80,
-        height: 80,
-        borderRadius: 16,
+        width: 76,
+        height: 76,
+        borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -1372,7 +1465,7 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     popularServiceNameRow: {
-        fontSize: 16,
+        fontSize: 15,
         fontWeight: '700',
         color: '#0f172a',
         letterSpacing: -0.3,
@@ -1407,14 +1500,14 @@ const styles = StyleSheet.create({
         color: '#94a3b8',
     },
     popularServicePriceRow: {
-        fontSize: 16,
+        fontSize: 15,
         fontWeight: '700',
         color: '#e67e22',
     },
     popularBookButtonRow: {
-        paddingHorizontal: 16,
+        paddingHorizontal: 14,
         paddingVertical: 8,
-        borderRadius: 30,
+        borderRadius: 24,
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: B.accent,
@@ -1424,25 +1517,43 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
     popularBookTextRow: {
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: '700',
         color: '#ffffff',
     },
-    emptyState: {
+    errorState: {
         backgroundColor: '#ffffff',
-        borderRadius: 20,
+        borderRadius: 16,
         paddingVertical: 32,
         marginHorizontal: 20,
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#f0f2f5',
+        borderColor: '#fee2e2',
     },
-    emptyPopularContainer: {
-        paddingVertical: 24,
-        alignItems: 'center',
-        backgroundColor: '#ffffff',
+    errorTitle: {
+        marginTop: 8,
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#ef4444',
+    },
+    retryButton: {
+        marginTop: 12,
+        paddingHorizontal: 24,
+        paddingVertical: 8,
+        backgroundColor: B.accent,
         borderRadius: 20,
+    },
+    retryButtonText: {
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    emptyState: {
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        paddingVertical: 32,
         marginHorizontal: 20,
+        alignItems: 'center',
         borderWidth: 1,
         borderColor: '#f0f2f5',
     },
@@ -1451,6 +1562,15 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '500',
         color: '#64748b',
+    },
+    emptyPopularContainer: {
+        paddingVertical: 24,
+        alignItems: 'center',
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        marginHorizontal: 20,
+        borderWidth: 1,
+        borderColor: '#f0f2f5',
     },
     emptySubtitle: {
         fontSize: 12,
@@ -1463,9 +1583,9 @@ const styles = StyleSheet.create({
         backgroundColor: '#e2e8f0',
     },
     skeletonPopularImageRow: {
-        width: 80,
-        height: 80,
-        borderRadius: 16,
+        width: 76,
+        height: 76,
+        borderRadius: 14,
         backgroundColor: '#e2e8f0',
     },
     skeletonText: {

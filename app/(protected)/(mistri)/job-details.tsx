@@ -63,6 +63,7 @@ export default function JobDetailsScreen() {
     const customerDetails = requestData?.customerDetails;
     const selectedServices = requestData?.selectedServices || [];
 
+    // Calculate total price
     const totalPrice = selectedServices.reduce((sum, service) => sum + parseFloat(service.price), 0);
 
     const completeJobMutation = useCompleteServiceRequest();
@@ -364,18 +365,18 @@ export default function JobDetailsScreen() {
                         </Text>
                     </View>
 
-                    {/* Services */}
+                    {/* Services with Total */}
                     {selectedServices.length > 0 && (
                         <>
                             <DashedLine style={{ marginVertical: 10 }} />
                             <View style={styles.sectionBlock}>
-                                <Text style={styles.blockTitle}>Services</Text>
+                                <Text style={styles.blockTitle}>Services & Charges</Text>
                                 <View style={styles.itemsList}>
                                     {selectedServices.map((service: any) => (
                                         <View key={service.id} style={styles.itemGroup}>
                                             <View style={styles.itemRow}>
                                                 <Text style={styles.itemName} numberOfLines={1}>{service.name}</Text>
-                                                <View style={styles.itemLeader} />
+                                                <View className="flex-1" />
                                                 <Text style={styles.itemPrice}>Rs. {Number(service.price).toLocaleString()}</Text>
                                             </View>
                                             {service.description ? (
@@ -386,9 +387,12 @@ export default function JobDetailsScreen() {
                                         </View>
                                     ))}
                                 </View>
+
                                 <DashedLine style={{ marginVertical: 10 }} />
+
+                                {/* Total */}
                                 <View style={styles.totalRowReceipt}>
-                                    <Text style={styles.totalLabel}>Total Estimate</Text>
+                                    <Text style={styles.totalLabel}>Total Amount</Text>
                                     <Text style={styles.totalPrice}>Rs. {totalPrice.toLocaleString()}</Text>
                                 </View>
                             </View>
@@ -433,7 +437,7 @@ export default function JobDetailsScreen() {
                         </>
                     )}
 
-                    {/* Rating Received (if job is completed and customer rated) */}
+                    {/* Rating Received */}
                     {request.status === 'completed' && ratingData?.rating && (
                         <>
                             <DashedLine style={{ marginVertical: 10 }} />
@@ -458,7 +462,7 @@ export default function JobDetailsScreen() {
                     </View>
                 </View>
 
-                {/* Map Card - Outside receipt */}
+                {/* Map Card */}
                 {mapRegion && (
                     <View style={styles.mapCard}>
                         <MapView
@@ -796,13 +800,6 @@ const styles = StyleSheet.create({
         flex: 1,
         letterSpacing: 0.2,
     },
-    itemLeader: {
-        flex: 1,
-        height: 1,
-        backgroundColor: '#D1D5DB',
-        marginHorizontal: 10,
-        alignSelf: 'center',
-    },
     itemPrice: {
         fontSize: 13,
         fontWeight: '700',
@@ -834,7 +831,7 @@ const styles = StyleSheet.create({
     totalPrice: {
         fontSize: 16,
         fontWeight: '800',
-        color: '#111827',
+        color: '#10B981',
         letterSpacing: 0.5,
     },
     timelineList: {

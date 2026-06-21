@@ -1,4 +1,5 @@
 // app/(protected)/(customer)/service-status/[id].tsx
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -11,11 +12,15 @@ import {
   Image,
   RefreshControl,
   Alert,
+  Dimensions,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useAuth } from '../../../../context/AuthContext';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
+
+const { width: screenWidth } = Dimensions.get('window');
 
 interface ServiceRequest {
   id: string;
@@ -39,7 +44,7 @@ interface ServiceRequest {
   };
 }
 
-// Define status mapping with fallback
+// Define status mapping with blue theme
 const getStatusDetails = (status: string) => {
   const statusMap: Record<string, { label: string; color: string; icon: string }> = {
     'pending_approval': { 
@@ -79,7 +84,6 @@ const getStatusDetails = (status: string) => {
     },
   };
   
-  // Return the status or a fallback
   return statusMap[status] || { 
     label: status || 'Unknown Status', 
     color: '#94a3b8', 
@@ -88,20 +92,32 @@ const getStatusDetails = (status: string) => {
 };
 
 export default function ServiceStatusScreen() {
-  const { id } = useLocalSearchParams();
-  const { user, token, refreshAccessToken, logout, isTokenRefreshing } = useAuth();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { user, token, refreshAccessToken, logout } = useAuth();
   const router = useRouter();
+  const navigation = useNavigation();
+  
   const [request, setRequest] = useState<ServiceRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Set header title
   useEffect(() => {
-    fetchRequestStatus();
-    
-    // Poll every 30 seconds for updates
-    const interval = setInterval(fetchRequestStatus, 30000);
-    return () => clearInterval(interval);
+    navigation.setOptions({
+      title: 'Service Status',
+      headerBackTitle: 'Back',
+    });
+  }, [navigation]);
+
+  useEffect(() => {
+    if (id) {
+      fetchRequestStatus();
+      
+      // Poll every 30 seconds for updates
+      const interval = setInterval(fetchRequestStatus, 30000);
+      return () => clearInterval(interval);
+    }
   }, [id]);
 
   const makeAuthenticatedRequest = async (url: string, options: RequestInit = {}) => {
@@ -124,12 +140,10 @@ export default function ServiceStatusScreen() {
     let response = await makeRequest(currentToken);
     
     if (response.status === 401) {
-      // Try to refresh the token
       const newToken = await refreshAccessToken();
       if (newToken) {
         response = await makeRequest(newToken);
       } else {
-        // Token refresh failed - logout
         await logout();
         router.replace('/(auth)/login');
         throw new Error('Session expired. Please login again.');
@@ -147,7 +161,6 @@ export default function ServiceStatusScreen() {
       
       const response = await makeAuthenticatedRequest(url);
       
-      // Check if response is HTML (usually indicates a 404 page)
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('text/html')) {
         console.error('Received HTML instead of JSON - endpoint may not exist');
@@ -160,7 +173,7 @@ export default function ServiceStatusScreen() {
       if (response.ok && data.success) {
         setRequest(data.request);
         if (data.mistriDetails) {
-          setRequest(prev => ({ ...prev, mistriDetails: data.mistriDetails }));
+          setRequest(prev => prev ? { ...prev, mistriDetails: data.mistriDetails } : null);
         }
       } else {
         setError(data.message || 'Failed to load request');
@@ -168,11 +181,9 @@ export default function ServiceStatusScreen() {
     } catch (error: any) {
       console.error('Error fetching request status:', error);
       
-      // Check if it's a JSON parse error (HTML response)
       if (error.message?.includes('JSON Parse error') || error.message?.includes('Unexpected character')) {
         setError('API endpoint not found. Please check your server configuration.');
       } else if (error.message?.includes('Session expired')) {
-        // Already handled in makeAuthenticatedRequest
         return;
       } else {
         setError(error.message || 'Network error. Please pull to refresh.');
@@ -190,7 +201,7 @@ export default function ServiceStatusScreen() {
 
   const getStatusStep = () => {
     const steps = [
-      { key: 'pending_approval', label: 'Request Submitted', icon: 'checkmark-circle-outline' },
+      { key: 'pending', label: 'Request Submitted', icon: 'checkmark-circle-outline' },
       { key: 'assigned', label: 'Professional Assigned', icon: 'people-outline' },
       { key: 'started', label: 'Work Started', icon: 'construct-outline' },
       { key: 'completed', label: 'Completed', icon: 'checkbox-outline' },
@@ -216,15 +227,17 @@ export default function ServiceStatusScreen() {
     router.back();
   };
 
+  // Loading state
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#e67e22" />
+        <ActivityIndicator size="large" color="#2563eb" />
         <Text style={styles.loadingText}>Loading request details...</Text>
       </View>
     );
   }
 
+  // Error state
   if (error || !request) {
     return (
       <View style={styles.centered}>
@@ -245,222 +258,260 @@ export default function ServiceStatusScreen() {
   const { steps, currentIndex } = getStatusStep();
 
   return (
-    <ScrollView 
-      style={styles.container}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#e67e22']} />
-      }
-    >
-      {/* Status Header with Gradient */}
-      <LinearGradient
-        colors={['#e67e22', '#f39c12']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.headerGradient}
+    <>
+      <StatusBar style="light" />
+      <ScrollView 
+        style={styles.container}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2563eb']} />
+        }
       >
-        <TouchableOpacity onPress={goBack} style={styles.backHeaderButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Service Status</Text>
-        <View style={[styles.headerStatusBadge, { backgroundColor: statusInfo.color + '40' }]}>
-          <Ionicons name={statusInfo.icon as any} size={20} color="#fff" />
-          <Text style={styles.headerStatusText}>{statusInfo.label}</Text>
-        </View>
-        <Text style={styles.headerId}>Request #{request.id.slice(-8)}</Text>
-      </LinearGradient>
+        {/* Status Header with Blue Gradient */}
+        <LinearGradient
+          colors={['#1a56db', '#2563eb']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.headerGradient}
+        >
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>Service Status</Text>
+            <View style={[styles.headerStatusBadge, { backgroundColor: statusInfo.color + '30' }]}>
+              <Ionicons name={statusInfo.icon as any} size={20} color="#fff" />
+              <Text style={styles.headerStatusText}>{statusInfo.label}</Text>
+            </View>
+            <Text style={styles.headerId}>Request #{request.id.slice(-8).toUpperCase()}</Text>
+          </View>
+        </LinearGradient>
 
-      {/* Progress Steps */}
-      <View style={styles.progressCard}>
-        {steps.map((step, index) => (
-          <View key={step.key} style={styles.stepContainer}>
-            <View style={styles.stepIconContainer}>
-              <View style={[
-                styles.stepCircle,
-                index <= currentIndex && styles.stepCircleActive,
-              ]}>
-                {index < currentIndex ? (
-                  <Ionicons name="checkmark" size={20} color="#fff" />
-                ) : (
-                  <Ionicons
-                    name={step.icon as any}
-                    size={18}
-                    color={index <= currentIndex ? '#fff' : '#94a3b8'}
-                  />
+        {/* Progress Steps */}
+        <View style={styles.progressCard}>
+          {steps.map((step, index) => (
+            <View key={step.key} style={styles.stepContainer}>
+              <View style={styles.stepIconContainer}>
+                <View style={[
+                  styles.stepCircle,
+                  index <= currentIndex && styles.stepCircleActive,
+                ]}>
+                  {index < currentIndex ? (
+                    <Ionicons name="checkmark" size={20} color="#fff" />
+                  ) : (
+                    <Ionicons
+                      name={step.icon as any}
+                      size={18}
+                      color={index <= currentIndex ? '#fff' : '#94a3b8'}
+                    />
+                  )}
+                </View>
+                {index < steps.length - 1 && (
+                  <View style={[
+                    styles.stepLine,
+                    index < currentIndex && styles.stepLineActive,
+                  ]} />
                 )}
               </View>
-              {index < steps.length - 1 && (
-                <View style={[
-                  styles.stepLine,
-                  index < currentIndex && styles.stepLineActive,
-                ]} />
-              )}
-            </View>
-            <View style={styles.stepContent}>
-              <Text style={[
-                styles.stepLabel,
-                index <= currentIndex && styles.stepLabelActive,
-              ]}>
-                {step.label}
-              </Text>
-              {index === currentIndex && (
-                <Text style={styles.stepCurrent}>Current</Text>
-              )}
-            </View>
-          </View>
-        ))}
-      </View>
-
-      {/* Assigned Professional Details */}
-      {request.mistriDetails && request.status !== 'pending_approval' && request.status !== 'canceled' && request.status !== 'rejected' && (
-        <View style={styles.mistriCard}>
-          <Text style={styles.sectionTitle}>
-            <Ionicons name="person" size={18} color="#e67e22" /> Assigned Professional
-          </Text>
-          <View style={styles.mistriInfo}>
-            <View style={styles.mistriAvatar}>
-              {request.mistriDetails.profilePhotoUrl ? (
-                <Image source={{ uri: request.mistriDetails.profilePhotoUrl }} style={styles.avatar} />
-              ) : (
-                <Text style={styles.avatarText}>
-                  {request.mistriDetails.fullName?.charAt(0).toUpperCase() || 'M'}
+              <View style={styles.stepContent}>
+                <Text style={[
+                  styles.stepLabel,
+                  index <= currentIndex && styles.stepLabelActive,
+                ]}>
+                  {step.label}
                 </Text>
-              )}
-            </View>
-            <View style={styles.mistriDetails}>
-              <Text style={styles.mistriName}>{request.mistriDetails.fullName}</Text>
-              <View style={styles.ratingContainer}>
-                <Ionicons name="star" size={14} color="#fbbf24" />
-                <Text style={styles.ratingText}>
-                  {request.mistriDetails.averageRating || 'New'} 
-                </Text>
+                {index === currentIndex && (
+                  <View style={styles.stepCurrentBadge}>
+                    <Text style={styles.stepCurrent}>Current</Text>
+                  </View>
+                )}
               </View>
             </View>
-            <TouchableOpacity style={styles.callButton} onPress={callMistri}>
-              <Ionicons name="call" size={18} color="#fff" />
-            </TouchableOpacity>
-          </View>
+          ))}
         </View>
-      )}
 
-      {/* Payment Details */}
-      {request.paymentAmount && (
-        <View style={styles.paymentCard}>
+        {/* Assigned Professional Details */}
+        {request.mistriDetails && request.status !== 'pending' && request.status !== 'canceled' && request.status !== 'rejected' && (
+          <View style={styles.mistriCard}>
+            <Text style={styles.sectionTitle}>
+              <Ionicons name="person" size={18} color="#2563eb" /> Assigned Professional
+            </Text>
+            <View style={styles.mistriInfo}>
+              <View style={styles.mistriAvatar}>
+                {request.mistriDetails.profilePhotoUrl ? (
+                  <Image source={{ uri: request.mistriDetails.profilePhotoUrl }} style={styles.avatar} />
+                ) : (
+                  <Text style={styles.avatarText}>
+                    {request.mistriDetails.fullName?.charAt(0).toUpperCase() || 'M'}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.mistriDetails}>
+                <Text style={styles.mistriName}>{request.mistriDetails.fullName}</Text>
+                <View style={styles.ratingContainer}>
+                  <Ionicons name="star" size={14} color="#fbbf24" />
+                  <Text style={styles.ratingText}>
+                    {request.mistriDetails.averageRating || 'New'} 
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity style={styles.callButton} onPress={callMistri}>
+                <Ionicons name="call" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Payment Details */}
+        {request.paymentAmount && (
+          <View style={styles.paymentCard}>
+            <Text style={styles.sectionTitle}>
+              <Ionicons name="cash" size={18} color="#2563eb" /> Payment Details
+            </Text>
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>Total Amount</Text>
+              <Text style={styles.paymentAmount}>
+                रु {parseFloat(request.paymentAmount).toLocaleString()}
+              </Text>
+            </View>
+            <Text style={styles.paymentNote}>
+              💳 Payment to be made directly to the professional after service completion
+            </Text>
+          </View>
+        )}
+
+        {/* Service Details */}
+        <View style={styles.detailsCard}>
           <Text style={styles.sectionTitle}>
-            <Ionicons name="cash" size={18} color="#e67e22" /> Payment Details
+            <Ionicons name="information-circle" size={18} color="#2563eb" /> Service Details
           </Text>
-          <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>Total Amount</Text>
-            <Text style={styles.paymentAmount}>
-              रु {parseFloat(request.paymentAmount).toLocaleString()}
-            </Text>
-          </View>
-          <Text style={styles.paymentNote}>
-            💳 Payment to be made directly to the professional after service completion
-          </Text>
-        </View>
-      )}
-
-      {/* Service Details */}
-      <View style={styles.detailsCard}>
-        <Text style={styles.sectionTitle}>
-          <Ionicons name="information-circle" size={18} color="#e67e22" /> Service Details
-        </Text>
-        <View style={styles.detailRow}>
-          <Ionicons name="build" size={18} color="#64748b" />
-          <Text style={styles.detailText}>{request.type}</Text>
-        </View>
-        <View style={styles.detailRow}>
-          <Ionicons name="location" size={18} color="#64748b" />
-          <Text style={styles.detailText}>{request.address}</Text>
-        </View>
-        {request.customerNotes && (
           <View style={styles.detailRow}>
-            <Ionicons name="document-text" size={18} color="#64748b" />
-            <Text style={styles.detailText}>{request.customerNotes}</Text>
+            <Ionicons name="build" size={18} color="#64748b" />
+            <Text style={styles.detailText}>{request.type}</Text>
           </View>
-        )}
-        {request.adminNotes && (
-          <View style={styles.adminNoteContainer}>
-            <Ionicons name="information-circle" size={18} color="#e67e22" />
-            <Text style={styles.adminNoteText}>{request.adminNotes}</Text>
+          <View style={styles.detailRow}>
+            <Ionicons name="location" size={18} color="#64748b" />
+            <Text style={styles.detailText}>{request.address}</Text>
           </View>
-        )}
-      </View>
-
-      {/* Timeline */}
-      <View style={styles.timelineCard}>
-        <Text style={styles.sectionTitle}>
-          <Ionicons name="time" size={18} color="#e67e22" /> Timeline
-        </Text>
-        <View style={styles.timelineItem}>
-          <Text style={styles.timelineLabel}>📋 Requested</Text>
-          <Text style={styles.timelineValue}>
-            {new Date(request.createdAt).toLocaleString()}
-          </Text>
+          {request.customerNotes && (
+            <View style={styles.detailRow}>
+              <Ionicons name="document-text" size={18} color="#64748b" />
+              <Text style={styles.detailText}>{request.customerNotes}</Text>
+            </View>
+          )}
+          {request.adminNotes && (
+            <View style={styles.adminNoteContainer}>
+              <Ionicons name="information-circle" size={18} color="#2563eb" />
+              <Text style={styles.adminNoteText}>{request.adminNotes}</Text>
+            </View>
+          )}
         </View>
-        {request.assignedAt && (
-          <View style={styles.timelineItem}>
-            <Text style={styles.timelineLabel}>👤 Assigned</Text>
-            <Text style={styles.timelineValue}>
-              {new Date(request.assignedAt).toLocaleString()}
-            </Text>
-          </View>
-        )}
-        {request.startedWorkAt && (
-          <View style={styles.timelineItem}>
-            <Text style={styles.timelineLabel}>🔨 Work Started</Text>
-            <Text style={styles.timelineValue}>
-              {new Date(request.startedWorkAt).toLocaleString()}
-            </Text>
-          </View>
-        )}
-        {request.completedAt && (
-          <View style={styles.timelineItem}>
-            <Text style={styles.timelineLabel}>✅ Completed</Text>
-            <Text style={styles.timelineValue}>
-              {new Date(request.completedAt).toLocaleString()}
-            </Text>
-          </View>
-        )}
-      </View>
 
-      {/* Action Buttons */}
-      <View style={styles.actionContainer}>
-        <TouchableOpacity 
-          style={[styles.actionButton, styles.actionButtonPrimary]} 
-          onPress={() => router.push('/(protected)/(customer)')}
-        >
-          <Ionicons name="home" size={20} color="#fff" />
-          <Text style={styles.actionButtonText}>Back to Home</Text>
-        </TouchableOpacity>
-        
-        {request.status === 'completed' && (
+        {/* Timeline */}
+        <View style={styles.timelineCard}>
+          <Text style={styles.sectionTitle}>
+            <Ionicons name="time" size={18} color="#2563eb" /> Timeline
+          </Text>
+          <View style={styles.timelineItem}>
+            <Text style={styles.timelineLabel}>📋 Requested</Text>
+            <Text style={styles.timelineValue}>
+              {new Date(request.createdAt).toLocaleString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+            </Text>
+          </View>
+          {request.assignedAt && (
+            <View style={styles.timelineItem}>
+              <Text style={styles.timelineLabel}>👤 Assigned</Text>
+              <Text style={styles.timelineValue}>
+                {new Date(request.assignedAt).toLocaleString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </View>
+          )}
+          {request.startedWorkAt && (
+            <View style={styles.timelineItem}>
+              <Text style={styles.timelineLabel}>🔨 Work Started</Text>
+              <Text style={styles.timelineValue}>
+                {new Date(request.startedWorkAt).toLocaleString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </View>
+          )}
+          {request.completedAt && (
+            <View style={styles.timelineItem}>
+              <Text style={styles.timelineLabel}>✅ Completed</Text>
+              <Text style={styles.timelineValue}>
+                {new Date(request.completedAt).toLocaleString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Action Buttons */}
+        <View style={styles.actionContainer}>
           <TouchableOpacity 
-            style={[styles.actionButton, styles.actionButtonSecondary]}
-            onPress={() => {
-              router.push(`/review/${request.id}`);
-            }}
+            style={[styles.actionButton, styles.actionButtonPrimary]} 
+            onPress={() => router.push('/(protected)/(customer)')}
           >
-            <Ionicons name="star" size={20} color="#e67e22" />
-            <Text style={[styles.actionButtonText, { color: '#e67e22' }]}>Leave a Review</Text>
+            <Ionicons name="home" size={20} color="#fff" />
+            <Text style={styles.actionButtonText}>Back to Home</Text>
           </TouchableOpacity>
-        )}
-      </View>
-    </ScrollView>
+          
+          {request.status === 'completed' && (
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.actionButtonSecondary]}
+              onPress={() => {
+                router.push(`/(protected)/(customer)/review/${request.id}`);
+              }}
+            >
+              <Ionicons name="star" size={20} color="#2563eb" />
+              <Text style={[styles.actionButtonText, { color: '#2563eb' }]}>Leave a Review</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Show "Book Again" button for completed requests */}
+          {request.status === 'completed' && (
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.actionButtonTertiary]}
+              onPress={() => {
+                router.push('/(protected)/(customer)/services');
+              }}
+            >
+              <Ionicons name="refresh" size={20} color="#fff" />
+              <Text style={styles.actionButtonText}>Book Again</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#f8fafc', 
+    backgroundColor: '#f0f4f8', 
   },
   centered: { 
     flex: 1, 
     justifyContent: 'center', 
     alignItems: 'center', 
     padding: 20,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#f0f4f8',
   },
   loadingText: {
     marginTop: 12,
@@ -485,7 +536,7 @@ const styles = StyleSheet.create({
     marginTop: 16, 
     paddingHorizontal: 24, 
     paddingVertical: 12, 
-    backgroundColor: '#e67e22', 
+    backgroundColor: '#2563eb', 
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -512,21 +563,18 @@ const styles = StyleSheet.create({
   headerGradient: {
     paddingHorizontal: 20,
     paddingTop: 20,
-    paddingBottom: 24,
+    paddingBottom: 28,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },
-  backHeaderButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    marginBottom: 8,
+  headerContent: {
+    gap: 8,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '700',
     color: '#fff',
-    marginBottom: 12,
+    letterSpacing: -0.5,
   },
   headerStatusBadge: {
     flexDirection: 'row',
@@ -543,9 +591,11 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   headerId: {
-    fontSize: 12,
+    fontSize: 13,
     color: 'rgba(255,255,255,0.8)',
-    marginTop: 8,
+    marginTop: 4,
+    fontWeight: '500',
+    letterSpacing: 0.5,
   },
   
   // Progress Card
@@ -555,11 +605,11 @@ const styles = StyleSheet.create({
     padding: 20, 
     margin: 16,
     marginBottom: 12,
-    elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   stepContainer: { 
     flexDirection: 'row', 
@@ -579,12 +629,12 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   stepCircleActive: { 
-    backgroundColor: '#e67e22',
-    shadowColor: '#e67e22',
-    shadowOffset: { width: 0, height: 2 },
+    backgroundColor: '#2563eb',
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 6,
+    elevation: 4,
   },
   stepLine: { 
     width: 2, 
@@ -593,7 +643,7 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
   stepLineActive: { 
-    backgroundColor: '#e67e22',
+    backgroundColor: '#2563eb',
   },
   stepContent: { 
     flex: 1, 
@@ -608,11 +658,18 @@ const styles = StyleSheet.create({
     color: '#0f172a', 
     fontWeight: '600',
   },
+  stepCurrentBadge: {
+    marginTop: 2,
+  },
   stepCurrent: {
     fontSize: 10,
-    color: '#e67e22',
-    fontWeight: '600',
-    marginTop: 2,
+    color: '#2563eb',
+    fontWeight: '700',
+    backgroundColor: '#2563eb15',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
   },
   
   // Mistri Card
@@ -622,11 +679,11 @@ const styles = StyleSheet.create({
     padding: 16, 
     marginHorizontal: 16,
     marginBottom: 12,
-    elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   sectionTitle: { 
     fontSize: 16, 
@@ -642,7 +699,7 @@ const styles = StyleSheet.create({
     width: 56, 
     height: 56, 
     borderRadius: 28, 
-    backgroundColor: '#e67e22', 
+    backgroundColor: '#2563eb', 
     justifyContent: 'center', 
     alignItems: 'center', 
     marginRight: 12,
@@ -676,16 +733,16 @@ const styles = StyleSheet.create({
     color: '#64748b',
   },
   callButton: { 
-    backgroundColor: '#e67e22', 
+    backgroundColor: '#2563eb', 
     padding: 12,
     borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#e67e22',
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 6,
+    elevation: 4,
   },
   
   // Payment Card
@@ -695,11 +752,11 @@ const styles = StyleSheet.create({
     padding: 16, 
     marginHorizontal: 16,
     marginBottom: 12,
-    elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   paymentRow: { 
     flexDirection: 'row', 
@@ -714,7 +771,7 @@ const styles = StyleSheet.create({
   paymentAmount: { 
     fontSize: 20, 
     fontWeight: '700', 
-    color: '#e67e22',
+    color: '#2563eb',
   },
   paymentNote: { 
     fontSize: 12, 
@@ -732,11 +789,11 @@ const styles = StyleSheet.create({
     padding: 16, 
     marginHorizontal: 16,
     marginBottom: 12,
-    elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   detailRow: { 
     flexDirection: 'row', 
@@ -761,7 +818,7 @@ const styles = StyleSheet.create({
   adminNoteText: { 
     flex: 1, 
     fontSize: 13, 
-    color: '#e67e22', 
+    color: '#2563eb', 
     fontStyle: 'italic',
   },
   
@@ -772,11 +829,11 @@ const styles = StyleSheet.create({
     padding: 16, 
     marginHorizontal: 16,
     marginBottom: 12,
-    elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   timelineItem: { 
     flexDirection: 'row', 
@@ -797,7 +854,7 @@ const styles = StyleSheet.create({
   // Action Buttons
   actionContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 24,
+    paddingBottom: 32,
     gap: 10,
   },
   actionButton: {
@@ -809,17 +866,25 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   actionButtonPrimary: {
-    backgroundColor: '#e67e22',
-    shadowColor: '#e67e22',
-    shadowOffset: { width: 0, height: 2 },
+    backgroundColor: '#2563eb',
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 6,
+    elevation: 4,
   },
   actionButtonSecondary: {
     backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e67e22',
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+  },
+  actionButtonTertiary: {
+    backgroundColor: '#1e293b',
+    shadowColor: '#1e293b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
   },
   actionButtonText: {
     fontSize: 16,
