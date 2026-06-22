@@ -8,19 +8,19 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://servexapi.linkbinary.com.np"
+        "EXPO_PUBLIC_API_BASE_URL": "https://shivering-shape-scruffy.ngrok-free.dev"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://servexapi.linkbinary.com.np"
+        "EXPO_PUBLIC_API_BASE_URL": "https://shivering-shape-scruffy.ngrok-free.dev"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://servexapi.linkbinary.com.np"
+        "EXPO_PUBLIC_API_BASE_URL": "https://shivering-shape-scruffy.ngrok-free.dev"
       }
     },
     "apk": {
@@ -28,7 +28,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://servexapi.linkbinary.com.np"
+        "EXPO_PUBLIC_API_BASE_URL": "https://shivering-shape-scruffy.ngrok-free.dev"
       }
     }
   },

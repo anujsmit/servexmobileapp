@@ -90,11 +90,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     experiments: {
         typedRoutes: true
     },
-    extra: {
-        router: {},
-        eas: {
-            projectId: "d656626c-b3e2-49c3-892b-b207e43dcf78"
-        }
+    "extra": {
+      "eas": {
+        "projectId": "8daf9335-5cbc-4c09-8b37-8c35eb60c402"
+      }
     },
-    owner: "laayonp"
+    owner: "anujkattel"
 });

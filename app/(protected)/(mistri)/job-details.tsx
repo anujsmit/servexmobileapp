@@ -1,4 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, {
+    useEffect,
+    useState,
+    useRef,
+    Component,
+    ErrorInfo,
+    ReactNode,
+} from 'react';
 import {
     View,
     Text,
@@ -20,7 +27,7 @@ import {
     useToggleUnpaid,
     useAcceptServiceRequest,
     useDeclineServiceRequest,
-    useRatingStatusQuery
+    useRatingStatusQuery,
 } from '../../../hooks/queries';
 import MapView, { Marker } from 'react-native-maps';
 import { useServices } from '../../../context/ServicesContext';
@@ -40,7 +47,61 @@ const DashedLine = ({ style }: { style?: object }) => (
     </View>
 );
 
+// ---------------------------------------------------------------------------
+// FIX: Error boundary. Hooks can't catch render-time exceptions (e.g. a bad
+// `request.type` value), so without this, any uncaught error in the tree
+// below crashes the entire app in production with no recovery path.
+// ---------------------------------------------------------------------------
+interface ErrorBoundaryState {
+    hasError: boolean;
+}
+
+class JobDetailsErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+    constructor(props: { children: ReactNode }) {
+        super(props);
+        this.state = { hasError: false };
+    }
+
+    static getDerivedStateFromError(): ErrorBoundaryState {
+        return { hasError: true };
+    }
+
+    componentDidCatch(error: Error, info: ErrorInfo) {
+        // TODO: wire this up to your crash reporting (Sentry, Bugsnag, etc.)
+        if (__DEV__) console.error('JobDetailsScreen crashed:', error, info);
+    }
+
+    handleRetry = () => {
+        this.setState({ hasError: false });
+    };
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <SafeAreaContainer>
+                    <View style={styles.loadingContainer}>
+                        <MaterialIcons name="error-outline" size={40} color="#DC2626" />
+                        <Text style={styles.loadingText}>Something went wrong loading this job.</Text>
+                        <TouchableOpacity onPress={this.handleRetry}>
+                            <Text style={{ color: '#2563EB', fontWeight: '600', marginTop: 4 }}>Try again</Text>
+                        </TouchableOpacity>
+                    </View>
+                </SafeAreaContainer>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 export default function JobDetailsScreen() {
+    return (
+        <JobDetailsErrorBoundary>
+            <JobDetailsScreenContent />
+        </JobDetailsErrorBoundary>
+    );
+}
+
+function JobDetailsScreenContent() {
     const router = useRouter();
     const trade = useMistriTradeTheme();
     const params = useLocalSearchParams();
@@ -51,6 +112,12 @@ export default function JobDetailsScreen() {
     const [isTogglingUnpaid, setIsTogglingUnpaid] = useState(false);
     const [isAccepting, setIsAccepting] = useState(false);
     const [isDeclining, setIsDeclining] = useState(false);
+    const [logoError, setLogoError] = useState(false);
+
+    // FIX: prevents the fetch-error Alert from firing over and over on every
+    // 5s poll while the request is in an error state.
+    const hasShownErrorAlertRef = useRef(false);
+    const hasShownMissingIdAlertRef = useRef(false);
 
     const { data: requestData, isLoading, error, isError } = useServiceRequestQuery(requestId, {
         refetchInterval: 5000,
@@ -63,8 +130,10 @@ export default function JobDetailsScreen() {
     const customerDetails = requestData?.customerDetails;
     const selectedServices = requestData?.selectedServices || [];
 
-    // Calculate total price
-    const totalPrice = selectedServices.reduce((sum, service) => sum + parseFloat(service.price), 0);
+    const totalPrice = selectedServices.reduce((sum, service) => {
+        const price = Number(service?.price);
+        return sum + (Number.isFinite(price) ? price : 0);
+    }, 0);
 
     const completeJobMutation = useCompleteServiceRequest();
     const toggleUnpaidMutation = useToggleUnpaid();
@@ -72,7 +141,8 @@ export default function JobDetailsScreen() {
     const declineJobMutation = useDeclineServiceRequest();
 
     useEffect(() => {
-        if (!requestId) {
+        if (!requestId && !hasShownMissingIdAlertRef.current) {
+            hasShownMissingIdAlertRef.current = true;
             Alert.alert('Error', 'Request ID not found', [
                 { text: 'OK', onPress: () => router.back() },
             ]);
@@ -81,10 +151,15 @@ export default function JobDetailsScreen() {
 
     useEffect(() => {
         if (isError && error) {
-            if (__DEV__) console.error('Error fetching request:', error);
-            Alert.alert('Error', 'Failed to load job details. Please try again.', [
-                { text: 'Go Back', onPress: () => router.back() },
-            ]);
+            if (!hasShownErrorAlertRef.current) {
+                hasShownErrorAlertRef.current = true;
+                if (__DEV__) console.error('Error fetching request:', error);
+                Alert.alert('Error', 'Failed to load job details. Please try again.', [
+                    { text: 'Go Back', onPress: () => router.back() },
+                ]);
+            }
+        } else {
+            hasShownErrorAlertRef.current = false;
         }
     }, [isError, error, router]);
 
@@ -252,15 +327,23 @@ export default function JobDetailsScreen() {
         );
     }
 
-    const mapRegion = request.lat && request.lng ? {
-        latitude: parseFloat(request.lat),
-        longitude: parseFloat(request.lng),
+    const lat = Number(request?.lat);
+    const lng = Number(request?.lng);
+    const isValidCoordinate = Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0;
+
+    const mapRegion = isValidCoordinate ? {
+        latitude: lat,
+        longitude: lng,
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
     } : null;
 
-    const serviceName = getServiceByName(request.type)?.displayName ||
-        request.type.charAt(0).toUpperCase() + request.type.slice(1);
+    // FIX: `request.type` can be missing/null on some records (legacy data,
+    // partial responses). Calling .charAt on undefined threw a TypeError
+    // that, with no error boundary, crashed the whole app in production.
+    const rawType: string = request.type ?? 'service';
+    const serviceName = getServiceByName(rawType)?.displayName ||
+        (rawType.charAt(0).toUpperCase() + rawType.slice(1));
 
     const timelineEvents = [
         { label: 'Requested', timestamp: request.createdAt, completed: true },
@@ -296,10 +379,7 @@ export default function JobDetailsScreen() {
                     {/* Receipt Header */}
                     <View style={styles.receiptHeader}>
                         <View style={styles.receiptBrand}>
-                            <Image
-                                source={require('../../../assets/images/logo.png')}
-                                style={styles.receiptLogo}
-                            />
+                            
                             <View>
                                 <Text style={styles.receiptTitle}>ServeX</Text>
                                 <Text style={styles.receiptSubtitle}>Job Receipt</Text>
@@ -361,7 +441,7 @@ export default function JobDetailsScreen() {
                     <View style={styles.sectionBlock}>
                         <Text style={styles.blockTitle}>Location</Text>
                         <Text style={styles.blockText} numberOfLines={3}>
-                            {request.address}
+                            {request.address || 'No address provided'}
                         </Text>
                     </View>
 
@@ -372,20 +452,25 @@ export default function JobDetailsScreen() {
                             <View style={styles.sectionBlock}>
                                 <Text style={styles.blockTitle}>Services & Charges</Text>
                                 <View style={styles.itemsList}>
-                                    {selectedServices.map((service: any) => (
-                                        <View key={service.id} style={styles.itemGroup}>
-                                            <View style={styles.itemRow}>
-                                                <Text style={styles.itemName} numberOfLines={1}>{service.name}</Text>
-                                                <View className="flex-1" />
-                                                <Text style={styles.itemPrice}>Rs. {Number(service.price).toLocaleString()}</Text>
+                                    {selectedServices.map((service: any, index: number) => {
+                                        const priceValue = Number(service?.price);
+                                        const safePrice = Number.isFinite(priceValue) ? priceValue : 0;
+                                        return (
+                                            <View key={service?.id ?? `service-${index}`} style={styles.itemGroup}>
+                                                <View style={styles.itemRow}>
+                                                    <Text style={styles.itemName} numberOfLines={1}>
+                                                        {service?.name ?? 'Service'}
+                                                    </Text>
+                                                    <Text style={styles.itemPrice}>Rs. {safePrice.toLocaleString()}</Text>
+                                                </View>
+                                                {service?.description ? (
+                                                    <Text style={styles.itemDescription} numberOfLines={2}>
+                                                        {service.description}
+                                                    </Text>
+                                                ) : null}
                                             </View>
-                                            {service.description ? (
-                                                <Text style={styles.itemDescription} numberOfLines={2}>
-                                                    {service.description}
-                                                </Text>
-                                            ) : null}
-                                        </View>
-                                    ))}
+                                        );
+                                    })}
                                 </View>
 
                                 <DashedLine style={{ marginVertical: 10 }} />
@@ -462,7 +547,7 @@ export default function JobDetailsScreen() {
                     </View>
                 </View>
 
-                {/* Map Card */}
+                {/* Map Card - Only render if we have valid coordinates */}
                 {mapRegion && (
                     <View style={styles.mapCard}>
                         <MapView
@@ -609,10 +694,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12,
         backgroundColor: DC.canvas,
+        paddingHorizontal: 24,
     },
     loadingText: {
         fontSize: 14,
         color: DC.muted,
+        textAlign: 'center',
     },
     content: {
         flex: 1,
@@ -798,6 +885,7 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#111827',
         flex: 1,
+        marginRight: 8,
         letterSpacing: 0.2,
     },
     itemPrice: {

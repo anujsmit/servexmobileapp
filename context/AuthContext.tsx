@@ -3,8 +3,7 @@ import { useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { AppState, AppStateStatus, Platform } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
-import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 
 export interface User {
     id: string;
@@ -58,6 +57,73 @@ const AuthContext = createContext<AuthContextData>({} as AuthContextData);
 
 import { API_BASE_URL as API_URL } from '../lib/config';
 
+// Check if running in Expo Go
+const isExpoGo = (): boolean => {
+    try {
+        return Constants?.expoConfig?.hostUri !== undefined;
+    } catch {
+        return true;
+    }
+};
+
+// FIXED: Disable auto-registration in Expo Go
+if (isExpoGo()) {
+    try {
+        // Try to import and disable auto-registration
+        const Notifications = require('expo-notifications');
+        // This prevents the auto-registration from running
+        if (Notifications.default?.setAutoRegistrationEnabled) {
+            Notifications.default.setAutoRegistrationEnabled(false);
+        }
+    } catch (e) {
+        // Module might not be available, that's fine
+    }
+}
+
+// Get project ID from config
+const getProjectId = (): string | undefined => {
+    try {
+        const config = Constants?.expoConfig;
+        const manifest = Constants?.manifest;
+        
+        const projectId = config?.extra?.eas?.projectId || 
+                         manifest?.extra?.eas?.projectId ||
+                         config?.projectId ||
+                         manifest?.projectId;
+        
+        return projectId;
+    } catch (error) {
+        if (__DEV__) console.error('Error getting project ID:', error);
+        return undefined;
+    }
+};
+
+// Lazy load notifications only when needed
+const getNotifications = async () => {
+    if (isExpoGo()) {
+        if (__DEV__) console.log('Skipping expo-notifications import in Expo Go');
+        return null;
+    }
+    
+    try {
+        const notifications = await import('expo-notifications');
+        return notifications;
+    } catch (error) {
+        if (__DEV__) console.error('Failed to load expo-notifications:', error);
+        return null;
+    }
+};
+
+// Lazy load Device module
+const getDevice = async () => {
+    try {
+        const device = await import('expo-device');
+        return device;
+    } catch {
+        return null;
+    }
+};
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<User | null>(null);
     const [token, setToken] = useState<string | null>(null);
@@ -99,7 +165,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                         } else if (storedToken) {
                             await validateUserExists(storedToken);
                             scheduleTokenRefresh();
-                            registerPushToken(storedToken);
+                            // Only register push token if not in Expo Go
+                            if (!isExpoGo() && getProjectId()) {
+                                registerPushToken(storedToken);
+                            }
                         }
                     }
                 }
@@ -172,21 +241,67 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const registerPushToken = async (authToken: string) => {
         if (!authToken) return;
+        
+        if (isExpoGo()) {
+            if (__DEV__) console.log('Skipping push notification registration in Expo Go');
+            return;
+        }
+
         try {
-            if (!Device.isDevice) return;
-            const { status: existingStatus } = await Notifications.getPermissionsAsync();
+            const notifications = await getNotifications();
+            if (!notifications) {
+                if (__DEV__) console.log('Notifications module not available');
+                return;
+            }
+
+            const device = await getDevice();
+            if (!device) {
+                if (__DEV__) console.log('Device module not available');
+                return;
+            }
+
+            if (!device.default.isDevice) {
+                if (__DEV__) console.log('Push notifications only work on physical devices');
+                return;
+            }
+
+            const projectId = getProjectId();
+            if (!projectId) {
+                if (__DEV__) console.warn('No project ID found for push notifications');
+                return;
+            }
+
+            if (__DEV__) console.log('Using project ID for notifications:', projectId);
+
+            const { status: existingStatus } = await notifications.default.getPermissionsAsync();
             let finalStatus = existingStatus;
             if (existingStatus !== 'granted') {
-                const { status } = await Notifications.requestPermissionsAsync();
+                const { status } = await notifications.default.requestPermissionsAsync();
                 finalStatus = status;
             }
-            if (finalStatus !== 'granted') return;
+            if (finalStatus !== 'granted') {
+                if (__DEV__) console.log('Push notification permissions denied');
+                return;
+            }
 
-            const pushTokenData = await Notifications.getExpoPushTokenAsync({
-                projectId: '0e6a5ebe-b7f6-46d3-8441-77faf9ba775a',
-            });
+            let pushTokenData;
+            try {
+                pushTokenData = await notifications.default.getExpoPushTokenAsync({
+                    projectId: projectId,
+                });
+            } catch (error) {
+                if (__DEV__) console.error('Error getting Expo push token:', error);
+                return;
+            }
 
-            const pushToken = pushTokenData.data;
+            const pushToken = pushTokenData?.data || pushTokenData?.token;
+            if (!pushToken) {
+                if (__DEV__) console.error('No push token received');
+                return;
+            }
+
+            if (__DEV__) console.log('Push token received:', pushToken);
+
             await fetch(`${API_URL}/api/auth/register-device-token`, {
                 method: 'POST',
                 headers: {
@@ -197,9 +312,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             });
 
             if (Platform.OS === 'android') {
-                await Notifications.setNotificationChannelAsync('default', {
+                await notifications.default.setNotificationChannelAsync('default', {
                     name: 'default',
-                    importance: Notifications.AndroidImportance.MAX,
+                    importance: notifications.default.AndroidImportance.MAX,
                     vibrationPattern: [0, 250, 250, 250],
                     lightColor: '#FF231F7C',
                 });
@@ -209,7 +324,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
-    // FIXED: Register using /api/auth/register endpoint
     const register = async (payload: RegisterPayload) => {
         const response = await fetch(`${API_URL}/api/auth/register`, {
             method: 'POST',
@@ -222,7 +336,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             throw new Error(data.message || 'Registration failed');
         }
 
-        // Store token if returned
         if (data.accessToken) {
             const accessToken = data.accessToken;
             const expiryTime = data.expiresAt || (Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -238,11 +351,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             await SecureStore.setItemAsync('user', JSON.stringify(data.user));
 
             scheduleTokenRefresh();
-            registerPushToken(accessToken);
+            
+            if (!isExpoGo() && getProjectId()) {
+                registerPushToken(accessToken);
+            }
         }
     };
 
-    // FIXED: Login endpoint
     const loginWithPassword = async (phone: string, password: string): Promise<LoginResponse> => {
         const response = await fetch(`${API_URL}/api/auth/login`, {
             method: 'POST',
@@ -252,7 +367,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         const data = await response.json();
 
-        // Handle case where account exists but is unverified
         if (response.status === 403 && data.isVerified === false) {
             return { isVerified: false, message: data.message };
         }
@@ -261,7 +375,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             throw new Error(data.message || 'Login failed');
         }
 
-        // Handle fully authenticated user response
         const accessToken = data.accessToken;
         const newRefreshToken = data.refreshToken;
         const expiryTime = data.expiresAt || (Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -280,7 +393,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         await SecureStore.setItemAsync('user', JSON.stringify(data.user));
 
         scheduleTokenRefresh();
-        registerPushToken(accessToken);
+        
+        if (!isExpoGo() && getProjectId()) {
+            registerPushToken(accessToken);
+        }
 
         return { isVerified: true, user: data.user, accessToken };
     };
@@ -351,7 +467,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             throw new Error(data.message || 'Failed to verify OTP');
         }
 
-        // Update user as verified
         if (data.user) {
             setUser(data.user);
             await SecureStore.setItemAsync('user', JSON.stringify(data.user));
