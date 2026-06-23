@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -20,112 +20,197 @@ import { useRouter } from 'expo-router';
 import { useServices } from '../../../../context/ServicesContext';
 import { useMistriTradeTheme } from '../../../../context/MistriTradeThemeContext';
 
-type SortOrder = 'newest' | 'oldest';
-type JobFilter = 'all' | 'active' | 'completed';
+// ---------------------------------------------------------------------------
+// Utility Functions
+// ---------------------------------------------------------------------------
+const safeString = (value, fallback = '') => {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string') return value;
+    try {
+        return String(value);
+    } catch {
+        return fallback;
+    }
+};
 
-export default function MyJobsScreen() {
-    const router = useRouter();
-    const trade = useMistriTradeTheme();
-    const jobsBrand = useMemo(
-        () => ({
-            filterOn: { borderColor: trade.accent, backgroundColor: trade.accentSoft },
-            filterTextOn: { color: trade.accent },
-        }),
-        [trade]
-    );
+const safeCapitalize = (str) => {
+    try {
+        const s = safeString(str, '');
+        if (!s) return 'Unknown';
+        return s.charAt(0).toUpperCase() + s.slice(1);
+    } catch {
+        return 'Unknown';
+    }
+};
 
-    // Fetch mistri profile to determine polling status
-    const { data: profile } = useMistriProfileQuery();
-    // Only poll when mistri is available (not unavailable or on_work)
-    const shouldPoll = profile?.availabilityStatus === 'available';
-    const { data: jobs = [], isLoading, error, refetch } = useMistriAcceptedJobsQuery({ enablePolling: shouldPoll });
-    const { activeServices } = useServices();
-    const [jobFilter, setJobFilter] = useState<JobFilter>('all');
-    const [filterType, setFilterType] = useState<string>('all');
-    const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
-    const [showFilters, setShowFilters] = useState(false);
-
-    const filteredAndSortedJobs = useMemo(() => {
-        let filtered = jobs;
-
-        if (jobFilter === 'active') {
-            filtered = filtered.filter(job => job.status === 'assigned' || job.status === 'pending');
-        } else if (jobFilter === 'completed') {
-            filtered = filtered.filter(job => job.status === 'completed');
-        }
-
-        if (filterType !== 'all') {
-            filtered = filtered.filter(job => job.type.toLowerCase() === filterType.toLowerCase());
-        }
-
-        filtered = [...filtered].sort((a, b) => {
-            const dateA = new Date(a.createdAt).getTime();
-            const dateB = new Date(b.createdAt).getTime();
-            return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
-        });
-
-        return filtered;
-    }, [jobs, jobFilter, filterType, sortOrder]);
-
-    const getSubtitle = () => {
-        const n = filteredAndSortedJobs.length;
-        if (jobFilter === 'all') {
-            if (filterType === 'all') {
-                return `${jobs.length} accepted ${jobs.length === 1 ? 'job' : 'jobs'}`;
-            }
-            return `${n} ${n === 1 ? 'job' : 'jobs'}`;
-        }
-        if (jobFilter === 'active') return `${n} active ${n === 1 ? 'job' : 'jobs'}`;
-        if (jobFilter === 'completed') return `${n} completed ${n === 1 ? 'job' : 'jobs'}`;
-        return '';
-    };
-
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'pending':
-                return '#f59e0b';
-            case 'assigned':
-                return '#0284c7';
-            case 'completed':
-                return trade.accent;
-            case 'canceled':
-                return '#ef4444';
-            default:
-                return DC.muted;
-        }
-    };
-
-    const getStatusBgColor = (status: string) => {
-        switch (status) {
-            case 'pending':
-                return '#fef3c7';
-            case 'assigned':
-                return '#e0f2fe';
-            case 'completed':
-                return trade.accentSoft;
-            case 'canceled':
-                return '#fee2e2';
-            default:
-                return DC.surfaceMuted;
-        }
-    };
-
-    const formatDate = (dateStr: string) => {
-        return new Date(dateStr).toLocaleDateString('en-US', {
+const formatDate = (dateStr) => {
+    if (!dateStr) return 'N/A';
+    try {
+        const date = new Date(dateStr);
+        if (Number.isNaN(date.getTime())) return 'Invalid date';
+        return date.toLocaleDateString('en-US', {
             month: 'short',
             day: 'numeric',
             year: 'numeric',
             hour: '2-digit',
             minute: '2-digit'
         });
-    };
+    } catch {
+        return 'Invalid date';
+    }
+};
 
-    const renderFilterButton = (type: string, label: string) => (
+const safeAmount = (value) => {
+    try {
+        const num = parseInt(value);
+        return Number.isFinite(num) ? num.toLocaleString() : '0';
+    } catch {
+        return '0';
+    }
+};
+
+type SortOrder = 'newest' | 'oldest';
+type JobFilter = 'all' | 'active' | 'completed';
+
+export default function MyJobsScreen() {
+    const router = useRouter();
+    const trade = useMistriTradeTheme();
+    
+    const jobsBrand = useMemo(
+        () => ({
+            filterOn: { borderColor: trade?.accent || '#2563EB', backgroundColor: trade?.accentSoft || '#EFF6FF' },
+            filterTextOn: { color: trade?.accent || '#2563EB' },
+        }),
+        [trade]
+    );
+
+    // Fetch mistri profile to determine polling status
+    const { data: profile } = useMistriProfileQuery();
+    
+    // Only poll when mistri is available
+    const shouldPoll = profile?.availabilityStatus === 'available';
+    
+    const { 
+        data: jobs = [], 
+        isLoading, 
+        error, 
+        refetch 
+    } = useMistriAcceptedJobsQuery({ 
+        enablePolling: shouldPoll 
+    });
+    
+    const { activeServices = [] } = useServices();
+    
+    const [jobFilter, setJobFilter] = useState<JobFilter>('all');
+    const [filterType, setFilterType] = useState<string>('all');
+    const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
+    const [showFilters, setShowFilters] = useState(false);
+
+    // Safe filtered and sorted jobs
+    const filteredAndSortedJobs = useMemo(() => {
+        try {
+            // Ensure jobs is an array
+            let filtered = Array.isArray(jobs) ? [...jobs] : [];
+
+            // Filter by status
+            if (jobFilter === 'active') {
+                filtered = filtered.filter(
+                    job => job?.status === 'assigned' || job?.status === 'pending'
+                );
+            } else if (jobFilter === 'completed') {
+                filtered = filtered.filter(
+                    job => job?.status === 'completed'
+                );
+            }
+
+            // Filter by service type
+            if (filterType !== 'all') {
+                filtered = filtered.filter(
+                    job => safeString(job?.type, '').toLowerCase() === filterType.toLowerCase()
+                );
+            }
+
+            // Sort by date
+            filtered.sort((a, b) => {
+                try {
+                    const dateA = new Date(a?.createdAt || 0).getTime();
+                    const dateB = new Date(b?.createdAt || 0).getTime();
+                    
+                    if (Number.isNaN(dateA) && Number.isNaN(dateB)) return 0;
+                    if (Number.isNaN(dateA)) return 1;
+                    if (Number.isNaN(dateB)) return -1;
+                    
+                    return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+                } catch {
+                    return 0;
+                }
+            });
+
+            return filtered;
+        } catch (error) {
+            console.error('Error filtering jobs:', error);
+            return [];
+        }
+    }, [jobs, jobFilter, filterType, sortOrder]);
+
+    // Safe counts
+    const jobCounts = useMemo(() => {
+        try {
+            const jobsArray = Array.isArray(jobs) ? jobs : [];
+            return {
+                total: jobsArray.length,
+                active: jobsArray.filter(j => j?.status === 'assigned' || j?.status === 'pending').length,
+                completed: jobsArray.filter(j => j?.status === 'completed').length,
+            };
+        } catch {
+            return { total: 0, active: 0, completed: 0 };
+        }
+    }, [jobs]);
+
+    const getSubtitle = useCallback(() => {
+        const n = filteredAndSortedJobs.length;
+        const word = n === 1 ? 'job' : 'jobs';
+        
+        if (jobFilter === 'all') {
+            if (filterType === 'all') {
+                return `${jobCounts.total} accepted ${jobCounts.total === 1 ? 'job' : 'jobs'}`;
+            }
+            return `${n} ${word}`;
+        }
+        if (jobFilter === 'active') return `${n} active ${word}`;
+        if (jobFilter === 'completed') return `${n} completed ${word}`;
+        return '';
+    }, [filteredAndSortedJobs.length, jobFilter, filterType, jobCounts]);
+
+    const getStatusColor = useCallback((status) => {
+        switch (status) {
+            case 'pending': return '#f59e0b';
+            case 'assigned': return '#0284c7';
+            case 'completed': return trade?.accent || '#10B981';
+            case 'canceled': return '#ef4444';
+            default: return DC.muted;
+        }
+    }, [trade?.accent]);
+
+    const getStatusBgColor = useCallback((status) => {
+        switch (status) {
+            case 'pending': return '#fef3c7';
+            case 'assigned': return '#e0f2fe';
+            case 'completed': return trade?.accentSoft || '#D1FAE5';
+            case 'canceled': return '#fee2e2';
+            default: return DC.surfaceMuted;
+        }
+    }, [trade?.accentSoft]);
+
+    const renderFilterButton = useCallback((type, label) => (
         <TouchableOpacity
             key={type}
             style={[
                 styles.filterButton,
-                filterType === type && { backgroundColor: trade.accent, borderColor: trade.accent },
+                filterType === type && { 
+                    backgroundColor: trade?.accent || '#2563EB', 
+                    borderColor: trade?.accent || '#2563EB' 
+                },
             ]}
             onPress={() => setFilterType(type)}
             activeOpacity={0.7}
@@ -137,14 +222,17 @@ export default function MyJobsScreen() {
                 {label}
             </Text>
         </TouchableOpacity>
-    );
+    ), [filterType, trade?.accent]);
 
-    const renderSortButton = (order: SortOrder, label: string) => (
+    const renderSortButton = useCallback((order, label) => (
         <TouchableOpacity
             key={order}
             style={[
                 styles.sortButton,
-                sortOrder === order && { backgroundColor: trade.accent, borderColor: trade.accent },
+                sortOrder === order && { 
+                    backgroundColor: trade?.accent || '#2563EB', 
+                    borderColor: trade?.accent || '#2563EB' 
+                },
             ]}
             onPress={() => setSortOrder(order)}
             activeOpacity={0.7}
@@ -156,85 +244,135 @@ export default function MyJobsScreen() {
                 {label}
             </Text>
         </TouchableOpacity>
-    );
+    ), [sortOrder, trade?.accent]);
 
-    const handleJobPress = (job: MistriJob) => {
-        router.push({
-            pathname: '/(protected)/(mistri)/job-details',
-            params: { requestId: job.id },
-        });
-    };
-
-    const renderJobItem = ({ item }: { item: MistriJob }) => {
-        const statusColor = getStatusColor(item.status);
-        const statusBgColor = getStatusBgColor(item.status);
+    const handleJobPress = useCallback((job) => {
+        if (!job?.id) return;
         
-        return (
-            <TouchableOpacity
-                style={styles.jobCard}
-                onPress={() => handleJobPress(item)}
-                activeOpacity={0.7}
-            >
-                <View style={styles.jobHeader}>
-                    <View style={[styles.jobTypeIcon, { backgroundColor: trade.accentSoft }]}>
-                        <MaterialIcons name="build" size={20} color={trade.accent} />
-                    </View>
-                    <View style={styles.jobInfo}>
-                        <Text style={styles.jobType} numberOfLines={1}>
-                            {item.type.charAt(0).toUpperCase() + item.type.slice(1)}
-                        </Text>
-                        <Text style={styles.jobCustomerHint} numberOfLines={1}>
-                            {item.customerName}
-                        </Text>
-                    </View>
-                    <View style={[styles.statusBadge, { backgroundColor: statusBgColor }]}>
-                        <Text style={[styles.statusText, { color: statusColor }]}>
-                            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                        </Text>
-                    </View>
-                </View>
+        try {
+            router.push({
+                pathname: '/(protected)/(mistri)/job-details',
+                params: { requestId: job.id },
+            });
+        } catch (error) {
+            console.error('Navigation error:', error);
+        }
+    }, [router]);
 
-                <Text style={styles.address} numberOfLines={2}>
-                    <Ionicons name="location-outline" size={14} color={DC.muted} />
-                    {' '}{item.address}
-                </Text>
-
-                <View style={styles.timestampContainer}>
-                    <View style={styles.dateRow}>
-                        <Ionicons name="calendar-outline" size={14} color={DC.muted} />
-                        <Text style={styles.date}>Requested: {formatDate(item.createdAt)}</Text>
-                    </View>
-                    {item.assignedAt && (
-                        <View style={styles.acceptedInfo}>
-                            <Ionicons name="checkmark-circle" size={14} color={trade.accent} />
-                            <Text style={[styles.acceptedText, { color: trade.accent }]}>
-                                Accepted {formatDate(item.assignedAt)}
+    const renderJobItem = useCallback(({ item }) => {
+        // Safety check
+        if (!item) return null;
+        
+        try {
+            const statusColor = getStatusColor(item.status);
+            const statusBgColor = getStatusBgColor(item.status);
+            const jobType = safeCapitalize(item.type);
+            const customerName = safeString(item.customerName, 'Unknown Customer');
+            const address = safeString(item.address, 'No address provided');
+            const status = safeCapitalize(item.status);
+            const paymentAmount = safeAmount(item.paymentAmount);
+            const createdAt = formatDate(item.createdAt);
+            const assignedAt = item.assignedAt ? formatDate(item.assignedAt) : null;
+            
+            return (
+                <TouchableOpacity
+                    style={styles.jobCard}
+                    onPress={() => handleJobPress(item)}
+                    activeOpacity={0.7}
+                >
+                    <View style={styles.jobHeader}>
+                        <View style={[
+                            styles.jobTypeIcon, 
+                            { backgroundColor: trade?.accentSoft || '#EFF6FF' }
+                        ]}>
+                            <MaterialIcons 
+                                name="build" 
+                                size={20} 
+                                color={trade?.accent || '#2563EB'} 
+                            />
+                        </View>
+                        <View style={styles.jobInfo}>
+                            <Text style={styles.jobType} numberOfLines={1}>
+                                {jobType}
+                            </Text>
+                            <Text style={styles.jobCustomerHint} numberOfLines={1}>
+                                {customerName}
                             </Text>
                         </View>
-                    )}
-                </View>
-
-                <View style={styles.jobFooter}>
-                    <View style={styles.priceContainer}>
-                        <Text style={[styles.priceText, { color: trade.accent }]}>
-                            NPR {item.paymentAmount ? parseInt(item.paymentAmount).toLocaleString() : '0'}
-                        </Text>
+                        <View style={[styles.statusBadge, { backgroundColor: statusBgColor }]}>
+                            <Text style={[styles.statusText, { color: statusColor }]}>
+                                {status}
+                            </Text>
+                        </View>
                     </View>
-                    <View style={styles.viewDetailsHint}>
-                        <Text style={[styles.viewDetailsText, { color: trade.accent }]}>View Details</Text>
-                        <Ionicons name="arrow-forward" size={14} color={trade.accent} />
-                    </View>
-                </View>
-            </TouchableOpacity>
-        );
-    };
 
+                    <Text style={styles.address} numberOfLines={2}>
+                        <Ionicons name="location-outline" size={14} color={DC.muted} />
+                        {' '}{address}
+                    </Text>
+
+                    <View style={styles.timestampContainer}>
+                        <View style={styles.dateRow}>
+                            <Ionicons name="calendar-outline" size={14} color={DC.muted} />
+                            <Text style={styles.date}>Requested: {createdAt}</Text>
+                        </View>
+                        {assignedAt && (
+                            <View style={styles.acceptedInfo}>
+                                <Ionicons 
+                                    name="checkmark-circle" 
+                                    size={14} 
+                                    color={trade?.accent || '#10B981'} 
+                                />
+                                <Text style={[
+                                    styles.acceptedText, 
+                                    { color: trade?.accent || '#10B981' }
+                                ]}>
+                                    Accepted {assignedAt}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+
+                    <View style={styles.jobFooter}>
+                        <View style={styles.priceContainer}>
+                            <Text style={[
+                                styles.priceText, 
+                                { color: trade?.accent || '#10B981' }
+                            ]}>
+                                NPR {paymentAmount}
+                            </Text>
+                        </View>
+                        <View style={styles.viewDetailsHint}>
+                            <Text style={[
+                                styles.viewDetailsText, 
+                                { color: trade?.accent || '#2563EB' }
+                            ]}>View Details</Text>
+                            <Ionicons 
+                                name="arrow-forward" 
+                                size={14} 
+                                color={trade?.accent || '#2563EB'} 
+                            />
+                        </View>
+                    </View>
+                </TouchableOpacity>
+            );
+        } catch (error) {
+            console.error('Error rendering job item:', error);
+            return null;
+        }
+    }, [getStatusColor, getStatusBgColor, handleJobPress, trade]);
+
+    const keyExtractor = useCallback((item) => {
+        return item?.id || Math.random().toString();
+    }, []);
+
+    // Loading state
     if (isLoading) {
         return (
             <SafeAreaContainer>
                 <PageTitle title="My Jobs" variant="mistri" />
                 <View style={styles.loading}>
-                    <ActivityIndicator size="large" color={trade.accent} />
+                    <ActivityIndicator size="large" color={trade?.accent || '#2563EB'} />
                     <Text style={styles.loadingText}>Loading jobs...</Text>
                 </View>
             </SafeAreaContainer>
@@ -245,6 +383,7 @@ export default function MyJobsScreen() {
         <SafeAreaContainer>
             <PageTitle variant="mistri" title="My Jobs" subtitle={getSubtitle()} />
 
+            {/* Status Filters */}
             <View style={styles.statusFiltersWrap}>
                 <ScrollView
                     horizontal
@@ -267,9 +406,10 @@ export default function MyJobsScreen() {
                                 jobFilter === 'all' && jobsBrand.filterTextOn,
                             ]}
                         >
-                            All ({jobs.length})
+                            All ({jobCounts.total})
                         </Text>
                     </TouchableOpacity>
+                    
                     <TouchableOpacity
                         style={[
                             styles.filterChip,
@@ -287,9 +427,10 @@ export default function MyJobsScreen() {
                                 jobFilter === 'active' && jobsBrand.filterTextOn,
                             ]}
                         >
-                            Active ({jobs.filter(j => j.status === 'assigned' || j.status === 'pending').length})
+                            Active ({jobCounts.active})
                         </Text>
                     </TouchableOpacity>
+                    
                     <TouchableOpacity
                         style={[
                             styles.filterChip,
@@ -299,7 +440,10 @@ export default function MyJobsScreen() {
                         onPress={() => setJobFilter('completed')}
                         activeOpacity={0.7}
                     >
-                        <View style={[styles.filterDot, { backgroundColor: trade.accent }]} />
+                        <View style={[
+                            styles.filterDot, 
+                            { backgroundColor: trade?.accent || '#10B981' }
+                        ]} />
                         <Text
                             style={[
                                 styles.filterChipText,
@@ -307,12 +451,13 @@ export default function MyJobsScreen() {
                                 jobFilter === 'completed' && jobsBrand.filterTextOn,
                             ]}
                         >
-                            Completed ({jobs.filter(j => j.status === 'completed').length})
+                            Completed ({jobCounts.completed})
                         </Text>
                     </TouchableOpacity>
                 </ScrollView>
             </View>
 
+            {/* Filters Toggle */}
             <View style={styles.filtersHeader}>
                 <TouchableOpacity
                     style={styles.filtersToggle}
@@ -335,6 +480,7 @@ export default function MyJobsScreen() {
                 </TouchableOpacity>
             </View>
 
+            {/* Extended Filters */}
             {showFilters && (
                 <View style={styles.filtersContainer}>
                     <View style={styles.filterSection}>
@@ -345,12 +491,12 @@ export default function MyJobsScreen() {
                             contentContainerStyle={styles.filterButtons}
                         >
                             {renderFilterButton('all', 'All')}
-                            {activeServices.map(service => (
-                                renderFilterButton(
+                            {Array.isArray(activeServices) && activeServices.map(service => 
+                                service?.serviceName ? renderFilterButton(
                                     service.serviceName.toLowerCase(),
-                                    service.displayName
-                                )
-                            ))}
+                                    service.displayName || service.serviceName
+                                ) : null
+                            )}
                         </ScrollView>
                     </View>
 
@@ -364,12 +510,16 @@ export default function MyJobsScreen() {
                 </View>
             )}
 
+            {/* Error State */}
             {error && (
                 <View style={styles.errorContainer}>
                     <Ionicons name="alert-circle" size={24} color="#ef4444" />
                     <Text style={styles.errorText}>Failed to load jobs. Please try again.</Text>
                     <TouchableOpacity 
-                        style={[styles.retryButton, { backgroundColor: trade.accent }]}
+                        style={[
+                            styles.retryButton, 
+                            { backgroundColor: trade?.accent || '#2563EB' }
+                        ]}
                         onPress={() => refetch()}
                     >
                         <Text style={styles.retryButtonText}>Retry</Text>
@@ -377,10 +527,18 @@ export default function MyJobsScreen() {
                 </View>
             )}
 
-            {filteredAndSortedJobs.length === 0 ? (
+            {/* Empty State */}
+            {!isLoading && !error && filteredAndSortedJobs.length === 0 && (
                 <View style={styles.empty}>
-                    <View style={[styles.emptyIconContainer, { backgroundColor: trade.accentSoft }]}>
-                        <Ionicons name="briefcase-outline" size={40} color={trade.accent} />
+                    <View style={[
+                        styles.emptyIconContainer, 
+                        { backgroundColor: trade?.accentSoft || '#EFF6FF' }
+                    ]}>
+                        <Ionicons 
+                            name="briefcase-outline" 
+                            size={40} 
+                            color={trade?.accent || '#2563EB'} 
+                        />
                     </View>
                     <Text style={styles.emptyText}>No accepted jobs</Text>
                     <Text style={styles.emptySubtext}>
@@ -393,16 +551,22 @@ export default function MyJobsScreen() {
                                 : 'Jobs you accept will appear here'}
                     </Text>
                 </View>
-            ) : (
+            )}
+
+            {/* Jobs List */}
+            {!isLoading && !error && filteredAndSortedJobs.length > 0 && (
                 <FlatList
                     data={filteredAndSortedJobs}
                     renderItem={renderJobItem}
-                    keyExtractor={(item) => item.id}
+                    keyExtractor={keyExtractor}
                     style={styles.listScroll}
                     contentContainerStyle={styles.listContainer}
                     showsVerticalScrollIndicator={false}
                     onScrollBeginDrag={() => showFilters && setShowFilters(false)}
                     scrollEventThrottle={16}
+                    removeClippedSubviews={true}
+                    maxToRenderPerBatch={10}
+                    windowSize={5}
                 />
             )}
         </SafeAreaContainer>

@@ -1,3 +1,3 @@
 /** Canonical legal URLs — keep in sync with Play Console privacy policy field. */
-export const PRIVACY_POLICY_URL = 'https://servex.linkbinary.com.np/privacy.html';
-export const TERMS_URL = 'https://servex.linkbinary.com.np/terms.html';
+export const PRIVACY_POLICY_URL = 'https://www.anujkattel.com.np/servex/privacypolicy';
+export const TERMS_URL = 'https://www.anujkattel.com.np/servex/termsofuse';

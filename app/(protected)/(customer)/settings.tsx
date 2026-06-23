@@ -147,13 +147,6 @@ export default function CustomerSettingsScreen() {
                         onPress={openPersonalInfo}
                     />
                     <SettingsRow
-                        icon={<MaterialIcons name="build" size={20} color={B.accent} />}
-                        iconBg={B.accentSoft}
-                        title="Book a service"
-                        subtitle="Find mistris near you"
-                        onPress={() => router.push('/(protected)/(customer)/service-request')}
-                    />
-                    <SettingsRow
                         icon={<MaterialIcons name="list-alt" size={20} color={DC.text} />}
                         iconBg={DC.surfaceMuted}
                         title="My requests"

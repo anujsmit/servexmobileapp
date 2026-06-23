@@ -20,7 +20,8 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://shivering-shape-scruffy.ngrok-free.dev"
+        "EXPO_PUBLIC_API_BASE_URL": "https://shivering-shape-scruffy.ngrok-free.dev",
+        "MAPBOX_ACCESS_TOKEN": "@mapbox_access_token"
       }
     },
     "apk": {

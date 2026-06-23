@@ -53,6 +53,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         compileSdkVersion: 35
     },
     plugins: [
+        "@rnmapbox/maps",
         "expo-router",
         [
             "expo-splash-screen",

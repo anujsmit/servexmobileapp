@@ -223,7 +223,6 @@ export default function CustomerDashboard() {
         fetchBanners();
     }, []);
 
-    // Update display categories when search changes
     useEffect(() => {
         if (searchQuery.trim()) {
             const filtered = categories.filter(category =>
@@ -247,8 +246,6 @@ export default function CustomerDashboard() {
             setError(null);
 
             const url = `${API_BASE}/api/public/categories`;
-            console.log('Fetching categories from:', url);
-
             const response = await fetch(url, {
                 headers: {
                     'ngrok-skip-browser-warning': 'true',
@@ -272,12 +269,9 @@ export default function CustomerDashboard() {
                     subCategoryCount: cat.subCategoryCount || 0,
                 }));
 
-                console.log(`✅ Loaded ${mappedCategories.length} categories:`, mappedCategories.map(c => c.name).join(', '));
-
                 setCategories(mappedCategories);
                 setDisplayCategories(mappedCategories);
             } else {
-                console.error('Failed to fetch categories:', data);
                 setError('Failed to load categories');
                 setCategories([]);
                 setDisplayCategories([]);
@@ -306,12 +300,11 @@ export default function CustomerDashboard() {
                     price: service.price,
                     imageUrl: service.imageUrl,
                     serviceId: service.categoryId,
-                    categoryName: service.categoryName,
+                    categoryName: service.categoryName || service.category || 'Service',
                     isPopular: true,
                 }));
                 setPopularServices(popularServicesList.slice(0, 10));
             } else {
-                // Fallback: filter from all services
                 const fallbackResponse = await fetch(`${API_BASE}/api/platform-services`);
                 const fallbackData = await fallbackResponse.json();
 
@@ -328,7 +321,7 @@ export default function CustomerDashboard() {
                                         price: service.price,
                                         imageUrl: service.imageUrl,
                                         serviceId: category.categoryId,
-                                        categoryName: category.categoryName,
+                                        categoryName: category.categoryName || 'Service',
                                         isPopular: true,
                                     });
                                 }
@@ -448,6 +441,8 @@ export default function CustomerDashboard() {
     };
 
     const openPopularService = (service: PlatformService) => {
+        const categoryNameValue = service.categoryName || service.serviceName || 'Service';
+
         router.push({
             pathname: '/service-details/[id]',
             params: {
@@ -455,7 +450,8 @@ export default function CustomerDashboard() {
                 name: service.name,
                 price: service.price,
                 description: service.description || '',
-                imageUrl: service.imageUrl || ''
+                imageUrl: service.imageUrl || '',
+                categoryName: categoryNameValue,
             },
         });
     };
@@ -544,7 +540,7 @@ export default function CustomerDashboard() {
                 <View style={styles.recentOrderHeader}>
                     <View style={[styles.recentOrderIconContainer, { backgroundColor: statusColor + '20' }]}>
                         <Ionicons
-                            name={getServiceIcon(recentRequest.type, true)}
+                            name={getServiceIcon(recentRequest.type, true) as any}
                             size={20}
                             color={statusColor}
                         />
@@ -599,30 +595,30 @@ export default function CustomerDashboard() {
             route: '/services'
         },
         {
-            id: 'emergency',
-            icon: 'bolt',
-            label: 'Emergency',
-            color: '#dc2626',
-            route: '/emergency'
-        },
-        {
             id: 'my_bookings',
             icon: 'calendar-check',
             label: 'My Bookings',
+            color: '#3b82f6',
             route: '/requests'
         },
         {
             id: 'track_order',
             icon: 'map-marker-alt',
             label: 'Track Order',
-            color: B.accent,
+            color: '#10b981',
             onPress: handleTrackRecentOrder
         },
+        {
+            id: 'support',
+            icon: 'headset',
+            label: 'Support',
+            color: '#8b5cf6',
+            route: '/support'
+        }
     ];
 
     const renderQuickActions = () => (
         <View style={styles.quickActionsSection}>
-            <Text style={styles.quickActionsTitle}>Quick Actions</Text>
             <View style={styles.quickActionsGrid}>
                 {quickActions.map((action) => (
                     <TouchableOpacity
@@ -631,8 +627,8 @@ export default function CustomerDashboard() {
                         onPress={action.onPress || (() => router.push(action.route as any))}
                         activeOpacity={0.7}
                     >
-                        <View style={[styles.quickActionIconWrapper, { backgroundColor: (action.color || B.accent) + '15' }]}>
-                            <FontAwesome5 name={action.icon} size={20} color={action.color || B.accent} />
+                        <View style={[styles.quickActionIconWrapper, { backgroundColor: action.color + '15' }]}>
+                            <FontAwesome5 name={action.icon as any} size={20} color={action.color} />
                         </View>
                         <Text style={styles.quickActionLabel} numberOfLines={1}>{action.label}</Text>
                     </TouchableOpacity>
@@ -744,7 +740,7 @@ export default function CustomerDashboard() {
     };
 
     // ============================================
-    // RENDER CATEGORIES - CLEAN & SIMPLE
+    // RENDER CATEGORIES
     // ============================================
 
     const renderCategories = () => {
@@ -795,7 +791,6 @@ export default function CustomerDashboard() {
                             const hasCustomIcon = category.customIconUrl && category.customIconUrl.length > 0;
                             const isImageFailed = failedImages[category.id];
 
-                            // Get first letter of category name
                             const firstLetter = categoryName.charAt(0).toUpperCase();
 
                             return (
@@ -805,15 +800,12 @@ export default function CustomerDashboard() {
                                     activeOpacity={0.7}
                                     onPress={() => openCategory(category)}
                                 >
-                                    <View style={[
-                                        styles.categoryIconContainer,
-                                        { backgroundColor: iconColor + '12' }
-                                    ]}>
+                                    <View style={[styles.categoryIconContainer, { backgroundColor: '#ffffff' }]}>
                                         {hasCustomIcon && !isImageFailed ? (
                                             <Image
                                                 source={{ uri: category.customIconUrl! }}
                                                 style={styles.categoryCustomIcon}
-                                                resizeMode="contain"
+                                                resizeMode="cover"  
                                                 onError={() => {
                                                     setFailedImages(prev => ({ ...prev, [category.id]: true }));
                                                 }}
@@ -1197,6 +1189,270 @@ const styles = StyleSheet.create({
         bottom: -10,
         opacity: 0.15,
     },
+    quickActionsSection: {
+        marginBottom: 20,
+        paddingHorizontal: 20,
+    },
+    quickActionsGrid: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        backgroundColor: '#ffffff',
+        padding: 16,
+        borderRadius: 16,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.03,
+        shadowRadius: 6,
+        elevation: 1,
+    },
+    quickActionCard: {
+        alignItems: 'center',
+        flex: 1,
+    },
+    quickActionIconWrapper: {
+        width: 48,
+        height: 48,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    quickActionLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#475569',
+    },
+    section: {
+        marginBottom: 24,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        marginBottom: 16,
+    },
+    sectionTitleContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#0f172a',
+    },
+    seeAllText: {
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    categoriesHorizontalScroll: {
+        paddingHorizontal: 20,
+        gap: 4,
+    },
+    categoryCardSkeleton: {
+        alignItems: 'center',
+        marginRight: 16,
+    },
+    skeletonIcon: {
+        width: 64,
+        height: 64,
+        borderRadius: 20,
+        backgroundColor: '#e2e8f0',
+        marginBottom: 8,
+    },
+    skeletonText: {
+        backgroundColor: '#e2e8f0',
+        borderRadius: 4,
+    },
+    categoryCard: {
+        alignItems: 'center',
+        marginRight: 16,
+        width: 80,
+    },
+    categoryIconContainer: {
+        width: 64,
+        height: 64,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 8,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 3,
+        borderWidth: 1,
+        borderColor: '#f1f5f9',
+    },
+        categoryCustomIcon: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 20, 
+    },
+    categoryIconFallback: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    categoryIconText: {
+        fontSize: 24,
+        fontWeight: '800',
+    },
+    categoryName: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#334155',
+        textAlign: 'center',
+    },
+    errorState: {
+        alignItems: 'center',
+        padding: 20,
+    },
+    errorTitle: {
+        fontSize: 14,
+        color: '#64748b',
+        marginTop: 8,
+        marginBottom: 12,
+    },
+    retryButton: {
+        backgroundColor: '#e67e22',
+        paddingHorizontal: 20,
+        paddingVertical: 8,
+        borderRadius: 8,
+    },
+    retryButtonText: {
+        color: '#fff',
+        fontWeight: '600',
+    },
+    emptyState: {
+        alignItems: 'center',
+        padding: 20,
+    },
+    emptyTitle: {
+        fontSize: 14,
+        color: '#94a3b8',
+        marginTop: 8,
+    },
+    popularListContainer: {
+        paddingHorizontal: 20,
+        gap: 12,
+    },
+    popularServiceCardRow: {
+        flexDirection: 'row',
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 12,
+        alignItems: 'center',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#f8fafc',
+    },
+    skeletonPopularImageRow: {
+        width: 76,
+        height: 76,
+        borderRadius: 14,
+        backgroundColor: '#e2e8f0',
+    },
+    popularImageWrapper: {
+        marginRight: 12,
+    },
+    popularServiceImageRow: {
+        width: 76,
+        height: 76,
+        borderRadius: 14,
+    },
+    popularServiceIconPlaceholderRow: {
+        width: 76,
+        height: 76,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    popularInfoContainerRow: {
+        flex: 1,
+    },
+    serviceNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 4,
+    },
+    popularServiceNameRow: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#0f172a',
+        flex: 1,
+    },
+    popularBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fffbeb',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 6,
+        marginLeft: 8,
+        gap: 2,
+    },
+    popularBadgeText: {
+        fontSize: 10,
+        fontWeight: '600',
+        color: '#d97706',
+    },
+    popularServiceDescriptionRow: {
+        fontSize: 12,
+        color: '#64748b',
+        marginBottom: 6,
+    },
+    priceRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    popularServicePriceLabelRow: {
+        fontSize: 11,
+        color: '#94a3b8',
+    },
+    popularServicePriceRow: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#0f172a',
+    },
+    popularBookButtonRow: {
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 12,
+        marginLeft: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    popularBookTextRow: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 13,
+    },
+    skeletonButtonRow: {
+        width: 60,
+        height: 32,
+        borderRadius: 12,
+        backgroundColor: '#e2e8f0',
+        marginLeft: 12,
+    },
+    emptyPopularContainer: {
+        alignItems: 'center',
+        padding: 20,
+    },
+    emptySubtitle: {
+        fontSize: 14,
+        color: '#94a3b8',
+        marginTop: 8,
+    },
     recentOrderCard: {
         backgroundColor: '#ffffff',
         borderRadius: 16,
@@ -1283,356 +1539,45 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: 12,
+        paddingVertical: 10,
+        backgroundColor: '#fff7ed', // B.accent + '10' equivalent
+        borderRadius: 10,
         gap: 6,
-        paddingVertical: 8,
-        backgroundColor: '#f8fafc',
-        borderRadius: 12,
     },
     recentOrderTrackText: {
         fontSize: 13,
-        fontWeight: '600',
-        color: B.accent,
-    },
-    quickActionsSection: {
-        paddingHorizontal: 20,
-        marginBottom: 24,
-    },
-    quickActionsTitle: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#0f172a',
-        marginBottom: 12,
-    },
-    quickActionsGrid: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    quickActionCard: {
-        alignItems: 'center',
-        gap: 6,
-        flex: 1,
-    },
-    quickActionIconWrapper: {
-        width: 52,
-        height: 52,
-        borderRadius: 26,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    quickActionLabel: {
-        fontSize: 11,
-        fontWeight: '500',
-        color: '#475569',
-        textAlign: 'center',
-    },
-    section: {
-        marginBottom: 28,
-    },
-    sectionHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 16,
-        paddingHorizontal: 20,
-    },
-    sectionTitleContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-    sectionTitle: {
-        fontSize: 18,
         fontWeight: '700',
-        color: '#0f172a',
-        letterSpacing: -0.3,
-    },
-    seeAllText: {
-        fontSize: 13,
-        fontWeight: '600',
-    },
-    categoriesHorizontalScroll: {
-        paddingLeft: 20,
-        paddingRight: 12,
-        gap: 12,
-    },
-    categoryCard: {
-        flexDirection: 'column',
-        alignItems: 'center',
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        paddingVertical: 14,
-        paddingHorizontal: 10,
-        borderWidth: 1,
-        borderColor: '#f1f5f9',
-        shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.02,
-        shadowRadius: 4,
-        elevation: 1,
-        width: 80,
-        minHeight: 100,
-        justifyContent: 'center',
-    },
-    categoryCardSkeleton: {
-        flexDirection: 'column',
-        alignItems: 'center',
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        paddingVertical: 14,
-        paddingHorizontal: 10,
-        borderWidth: 1,
-        borderColor: '#f1f5f9',
-        width: 80,
-        minHeight: 100,
-        justifyContent: 'center',
-    },
-    categoryIconContainer: {
-        width: 48,
-        height: 48,
-        borderRadius: 14,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 8,
-        overflow: 'hidden',
-    },
-    categoryIconFallback: {
-        width: 48,
-        height: 48,
-        borderRadius: 14,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    categoryIconText: {
-        fontSize: 22,
-        fontWeight: '600',
-    },
-    categoryCustomIcon: {
-        width: 40,
-        height: 40,
-        borderRadius: 8,
-    },
-    categoryName: {
-        fontSize: 11,
-        fontWeight: '600',
-        color: '#334155',
-        textAlign: 'center',
-    },
-    popularListContainer: {
-        paddingHorizontal: 20,
-        gap: 12,
-    },
-    popularServiceCardRow: {
-        flexDirection: 'row',
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        padding: 14,
-        borderWidth: 1,
-        borderColor: '#f0f2f5',
-        shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.06,
-        shadowRadius: 8,
-        elevation: 3,
-        alignItems: 'center',
-        gap: 14,
-    },
-    popularImageWrapper: {
-        width: 76,
-        height: 76,
-        borderRadius: 14,
-        overflow: 'hidden',
-        backgroundColor: '#f1f5f9',
-    },
-    popularServiceImageRow: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 14,
-    },
-    popularServiceIconPlaceholderRow: {
-        width: 76,
-        height: 76,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    popularInfoContainerRow: {
-        flex: 1,
-        gap: 4,
-    },
-    serviceNameRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    popularServiceNameRow: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: '#0f172a',
-        letterSpacing: -0.3,
-    },
-    popularBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fef3c7',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 12,
-        gap: 4,
-    },
-    popularBadgeText: {
-        fontSize: 10,
-        fontWeight: '600',
-        color: '#d97706',
-    },
-    popularServiceDescriptionRow: {
-        fontSize: 12,
-        color: '#64748b',
-        lineHeight: 16,
-    },
-    priceRow: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 6,
-        marginTop: 4,
-    },
-    popularServicePriceLabelRow: {
-        fontSize: 11,
-        color: '#94a3b8',
-    },
-    popularServicePriceRow: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: '#e67e22',
-    },
-    popularBookButtonRow: {
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        borderRadius: 24,
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: B.accent,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 6,
-        elevation: 4,
-    },
-    popularBookTextRow: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#ffffff',
-    },
-    errorState: {
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        paddingVertical: 32,
-        marginHorizontal: 20,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#fee2e2',
-    },
-    errorTitle: {
-        marginTop: 8,
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#ef4444',
-    },
-    retryButton: {
-        marginTop: 12,
-        paddingHorizontal: 24,
-        paddingVertical: 8,
-        backgroundColor: B.accent,
-        borderRadius: 20,
-    },
-    retryButtonText: {
-        color: '#fff',
-        fontWeight: '600',
-        fontSize: 14,
-    },
-    emptyState: {
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        paddingVertical: 32,
-        marginHorizontal: 20,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#f0f2f5',
-    },
-    emptyTitle: {
-        marginTop: 8,
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#64748b',
-    },
-    emptyPopularContainer: {
-        paddingVertical: 24,
-        alignItems: 'center',
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        marginHorizontal: 20,
-        borderWidth: 1,
-        borderColor: '#f0f2f5',
-    },
-    emptySubtitle: {
-        fontSize: 12,
-        color: '#94a3b8',
-    },
-    skeletonIcon: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: '#e2e8f0',
-    },
-    skeletonPopularImageRow: {
-        width: 76,
-        height: 76,
-        borderRadius: 14,
-        backgroundColor: '#e2e8f0',
-    },
-    skeletonText: {
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: '#e2e8f0',
-    },
-    skeletonButtonRow: {
-        width: 70,
-        height: 36,
-        borderRadius: 30,
-        backgroundColor: '#e2e8f0',
+        color: '#ea580c', // B.accent equivalent
     },
     modalContainer: {
         flex: 1,
-        backgroundColor: '#0a0c10',
+        backgroundColor: '#000',
     },
     modalHeader: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 20,
-        height: 60,
-        backgroundColor: '#1a1e26',
-        paddingTop: Platform.OS === 'ios' ? 10 : 0,
+        justifyContent: 'space-between',
+        padding: 16,
+        backgroundColor: '#0f172a',
     },
     modalCloseButton: {
         width: 40,
         height: 40,
         justifyContent: 'center',
         alignItems: 'center',
-        borderRadius: 20,
-        backgroundColor: '#2d3340',
     },
     modalTitle: {
+        color: '#fff',
         fontSize: 16,
         fontWeight: '600',
-        color: '#ffffff',
     },
     webview: {
         flex: 1,
-        backgroundColor: '#000000',
+        backgroundColor: '#000',
     },
     modalLoader: {
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: [{ translateX: -15 }, { translateY: -15 }],
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });

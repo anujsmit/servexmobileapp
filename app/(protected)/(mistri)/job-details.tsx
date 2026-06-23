@@ -5,6 +5,8 @@ import React, {
     Component,
     ErrorInfo,
     ReactNode,
+    useMemo,
+    useCallback,
 } from 'react';
 import {
     View,
@@ -15,7 +17,7 @@ import {
     Alert,
     Linking,
     ScrollView,
-    Image,
+    Platform,
 } from 'react-native';
 import { SafeAreaContainer } from '../../../components/SafeAreaContainer';
 import { PageTitle } from '../../../components/PageTitle';
@@ -29,7 +31,6 @@ import {
     useDeclineServiceRequest,
     useRatingStatusQuery,
 } from '../../../hooks/queries';
-import MapView, { Marker } from 'react-native-maps';
 import { useServices } from '../../../context/ServicesContext';
 import { RatingStars } from '../../../components/RatingStars';
 import { useMistriTradeTheme } from '../../../context/MistriTradeThemeContext';
@@ -38,263 +39,31 @@ import {
     mistriDashboardElevation as MISTRI_ELEV,
 } from '../../../lib/mistriDashboardTokens';
 
-// Dashed line component
-const DashedLine = ({ style }: { style?: object }) => (
-    <View style={[{ flexDirection: 'row', overflow: 'hidden', marginHorizontal: -16 }, style]}>
-        {Array.from({ length: 50 }).map((_, i) => (
-            <View key={i} style={{ width: 6, height: 1, backgroundColor: 'rgba(15, 23, 42, 0.12)', marginRight: 4 }} />
-        ))}
-    </View>
-);
-
 // ---------------------------------------------------------------------------
-// FIX: Error boundary. Hooks can't catch render-time exceptions (e.g. a bad
-// `request.type` value), so without this, any uncaught error in the tree
-// below crashes the entire app in production with no recovery path.
+// Utility Functions
 // ---------------------------------------------------------------------------
-interface ErrorBoundaryState {
-    hasError: boolean;
-}
-
-class JobDetailsErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
-    constructor(props: { children: ReactNode }) {
-        super(props);
-        this.state = { hasError: false };
+const isValidCoordinate = (lat, lng) => {
+    try {
+        const latitude = Number(lat);
+        const longitude = Number(lng);
+        
+        return (
+            Number.isFinite(latitude) &&
+            Number.isFinite(longitude) &&
+            latitude >= -90 &&
+            latitude <= 90 &&
+            longitude >= -180 &&
+            longitude <= 180 &&
+            !(latitude === 0 && longitude === 0)
+        );
+    } catch {
+        return false;
     }
+};
 
-    static getDerivedStateFromError(): ErrorBoundaryState {
-        return { hasError: true };
-    }
-
-    componentDidCatch(error: Error, info: ErrorInfo) {
-        // TODO: wire this up to your crash reporting (Sentry, Bugsnag, etc.)
-        if (__DEV__) console.error('JobDetailsScreen crashed:', error, info);
-    }
-
-    handleRetry = () => {
-        this.setState({ hasError: false });
-    };
-
-    render() {
-        if (this.state.hasError) {
-            return (
-                <SafeAreaContainer>
-                    <View style={styles.loadingContainer}>
-                        <MaterialIcons name="error-outline" size={40} color="#DC2626" />
-                        <Text style={styles.loadingText}>Something went wrong loading this job.</Text>
-                        <TouchableOpacity onPress={this.handleRetry}>
-                            <Text style={{ color: '#2563EB', fontWeight: '600', marginTop: 4 }}>Try again</Text>
-                        </TouchableOpacity>
-                    </View>
-                </SafeAreaContainer>
-            );
-        }
-        return this.props.children;
-    }
-}
-
-export default function JobDetailsScreen() {
-    return (
-        <JobDetailsErrorBoundary>
-            <JobDetailsScreenContent />
-        </JobDetailsErrorBoundary>
-    );
-}
-
-function JobDetailsScreenContent() {
-    const router = useRouter();
-    const trade = useMistriTradeTheme();
-    const params = useLocalSearchParams();
-    const requestId = params.requestId as string;
-    const { getServiceByName } = useServices();
-
-    const [isCompleting, setIsCompleting] = useState(false);
-    const [isTogglingUnpaid, setIsTogglingUnpaid] = useState(false);
-    const [isAccepting, setIsAccepting] = useState(false);
-    const [isDeclining, setIsDeclining] = useState(false);
-    const [logoError, setLogoError] = useState(false);
-
-    // FIX: prevents the fetch-error Alert from firing over and over on every
-    // 5s poll while the request is in an error state.
-    const hasShownErrorAlertRef = useRef(false);
-    const hasShownMissingIdAlertRef = useRef(false);
-
-    const { data: requestData, isLoading, error, isError } = useServiceRequestQuery(requestId, {
-        refetchInterval: 5000,
-        refetchIntervalInBackground: false,
-    });
-
-    const { data: ratingData } = useRatingStatusQuery(requestId);
-
-    const request = requestData?.request;
-    const customerDetails = requestData?.customerDetails;
-    const selectedServices = requestData?.selectedServices || [];
-
-    const totalPrice = selectedServices.reduce((sum, service) => {
-        const price = Number(service?.price);
-        return sum + (Number.isFinite(price) ? price : 0);
-    }, 0);
-
-    const completeJobMutation = useCompleteServiceRequest();
-    const toggleUnpaidMutation = useToggleUnpaid();
-    const acceptJobMutation = useAcceptServiceRequest();
-    const declineJobMutation = useDeclineServiceRequest();
-
-    useEffect(() => {
-        if (!requestId && !hasShownMissingIdAlertRef.current) {
-            hasShownMissingIdAlertRef.current = true;
-            Alert.alert('Error', 'Request ID not found', [
-                { text: 'OK', onPress: () => router.back() },
-            ]);
-        }
-    }, [requestId, router]);
-
-    useEffect(() => {
-        if (isError && error) {
-            if (!hasShownErrorAlertRef.current) {
-                hasShownErrorAlertRef.current = true;
-                if (__DEV__) console.error('Error fetching request:', error);
-                Alert.alert('Error', 'Failed to load job details. Please try again.', [
-                    { text: 'Go Back', onPress: () => router.back() },
-                ]);
-            }
-        } else {
-            hasShownErrorAlertRef.current = false;
-        }
-    }, [isError, error, router]);
-
-    const handleCallCustomer = () => {
-        if (customerDetails?.phone) {
-            Linking.openURL(`tel:${customerDetails.phone}`).catch((err) => {
-                if (__DEV__) console.error('Error opening dialer:', err);
-                Alert.alert('Error', 'Could not open phone dialer');
-            });
-        }
-    };
-
-    const handleOpenMaps = () => {
-        if (request?.lat && request?.lng) {
-            const url = `https://www.google.com/maps/search/?api=1&query=${request.lat},${request.lng}`;
-            Linking.openURL(url).catch((err) => {
-                if (__DEV__) console.error('Error opening maps:', err);
-                Alert.alert('Error', 'Could not open maps');
-            });
-        }
-    };
-
-    const handleCompleteJob = () => {
-        Alert.alert('Complete Job', 'Mark this job as completed?', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-                text: 'Complete',
-                style: 'default',
-                onPress: async () => {
-                    setIsCompleting(true);
-                    try {
-                        await completeJobMutation.mutateAsync(requestId);
-                        Alert.alert('Success', 'Job marked as completed');
-                    } catch (err) {
-                        if (__DEV__) console.error('Error completing job:', err);
-                        Alert.alert('Error', 'Failed to complete job. Please try again.');
-                    } finally {
-                        setIsCompleting(false);
-                    }
-                },
-            },
-        ], { cancelable: true });
-    };
-
-    const handleToggleUnpaid = async () => {
-        setIsTogglingUnpaid(true);
-        try {
-            await toggleUnpaidMutation.mutateAsync(requestId);
-            const newStatus = !request?.unpaid;
-            Alert.alert('Success', newStatus ? 'Job marked as unpaid' : 'Unpaid status removed');
-        } catch (err) {
-            if (__DEV__) console.error('Error toggling unpaid:', err);
-            Alert.alert('Error', 'Failed to update unpaid status. Please try again.');
-        } finally {
-            setIsTogglingUnpaid(false);
-        }
-    };
-
-    const handleAcceptJob = () => {
-        Alert.alert('Accept Job', 'Accept this job request?', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-                text: 'Accept',
-                style: 'default',
-                onPress: async () => {
-                    setIsAccepting(true);
-                    try {
-                        await acceptJobMutation.mutateAsync(requestId);
-                        Alert.alert('Success', 'Job accepted successfully');
-                    } catch (err) {
-                        if (__DEV__) console.error('Error accepting job:', err);
-                        Alert.alert('Error', 'Failed to accept job. Please try again.');
-                    } finally {
-                        setIsAccepting(false);
-                    }
-                },
-            },
-        ], { cancelable: true });
-    };
-
-    const handleDeclineJob = () => {
-        Alert.alert('Decline Job', 'Are you sure you want to decline this job?', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-                text: 'Decline',
-                style: 'destructive',
-                onPress: async () => {
-                    setIsDeclining(true);
-                    try {
-                        await declineJobMutation.mutateAsync(requestId);
-                        Alert.alert('Success', 'Job declined');
-                        router.back();
-                    } catch (err) {
-                        if (__DEV__) console.error('Error declining job:', err);
-                        Alert.alert('Error', 'Failed to decline job. Please try again.');
-                    } finally {
-                        setIsDeclining(false);
-                    }
-                },
-            },
-        ], { cancelable: true });
-    };
-
-    const getStatusColor = () => {
-        switch (request?.status) {
-            case 'pending': return '#F59E0B';
-            case 'assigned': return trade.accent;
-            case 'completed': return '#10B981';
-            case 'canceled': return '#EF4444';
-            default: return '#6B7280';
-        }
-    };
-
-    const getStatusLabel = () => {
-        switch (request?.status) {
-            case 'pending': return 'Waiting';
-            case 'assigned': return 'Accepted';
-            case 'completed': return 'Completed';
-            case 'canceled': return 'Canceled';
-            default: return 'Unknown';
-        }
-    };
-
-    const getStatusIcon = () => {
-        switch (request?.status) {
-            case 'pending': return 'hourglass-empty';
-            case 'assigned': return 'check-circle';
-            case 'completed': return 'done-all';
-            case 'canceled': return 'cancel';
-            default: return 'help';
-        }
-    };
-
-    const formatDateTime = (value?: string) => {
-        if (!value) return '-';
+const formatDateTime = (value) => {
+    if (!value) return '-';
+    try {
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return '-';
         return date.toLocaleString('en-US', {
@@ -303,71 +72,626 @@ function JobDetailsScreenContent() {
             hour: 'numeric',
             minute: '2-digit',
         });
+    } catch {
+        return '-';
+    }
+};
+
+const safeString = (value, fallback = '-') => {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string') return value;
+    try {
+        return String(value);
+    } catch {
+        return fallback;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Dashed Line Component
+// ---------------------------------------------------------------------------
+const DashedLine = React.memo(({ style }) => (
+    <View style={[{ flexDirection: 'row', overflow: 'hidden', marginHorizontal: -16 }, style]}>
+        {Array.from({ length: 50 }).map((_, i) => (
+            <View 
+                key={i} 
+                style={{ 
+                    width: 6, 
+                    height: 1, 
+                    backgroundColor: 'rgba(15, 23, 42, 0.12)', 
+                    marginRight: 4 
+                }} 
+            />
+        ))}
+    </View>
+));
+
+// ---------------------------------------------------------------------------
+// Error Boundary Component
+// ---------------------------------------------------------------------------
+interface ErrorBoundaryProps {
+    children: ReactNode;
+    onError?: (error: Error, errorInfo: ErrorInfo) => void;
+}
+
+interface ErrorBoundaryState {
+    hasError: boolean;
+    error: Error | null;
+}
+
+class JobDetailsErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+    constructor(props: ErrorBoundaryProps) {
+        super(props);
+        this.state = { 
+            hasError: false,
+            error: null,
+        };
+    }
+
+    static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+        return { 
+            hasError: true,
+            error,
+        };
+    }
+
+    componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+        console.error('JobDetailsScreen crashed:', {
+            error: error.message,
+            stack: error.stack,
+            componentStack: errorInfo.componentStack,
+            timestamp: new Date().toISOString(),
+        });
+    }
+
+    handleRetry = () => {
+        this.setState({ 
+            hasError: false,
+            error: null,
+        });
     };
 
-    const shortRequestId = requestId ? requestId.slice(0, 8).toUpperCase() : '-';
+    handleGoBack = () => {
+        try {
+            const router = (global as any).router;
+            if (router?.back) {
+                router.back();
+            }
+        } catch (e) {
+            console.error('Failed to navigate back:', e);
+        }
+    };
 
-    if (isLoading || !request) {
+    render() {
+        if (this.state.hasError) {
+            return (
+                <SafeAreaContainer>
+                    <View style={styles.errorContainer}>
+                        <MaterialIcons name="error-outline" size={48} color="#DC2626" />
+                        <Text style={styles.errorTitle}>Something went wrong</Text>
+                        <Text style={styles.errorMessage}>
+                            {this.state.error?.message || 'An unexpected error occurred loading this job.'}
+                        </Text>
+                        <View style={styles.errorActions}>
+                            <TouchableOpacity 
+                                style={styles.errorButton}
+                                onPress={this.handleRetry}
+                            >
+                                <MaterialIcons name="refresh" size={20} color="#FFFFFF" />
+                                <Text style={styles.errorButtonText}>Try Again</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.errorButton, styles.errorButtonSecondary]}
+                                onPress={this.handleGoBack}
+                            >
+                                <MaterialIcons name="arrow-back" size={20} color="#6B7280" />
+                                <Text style={styles.errorButtonTextSecondary}>Go Back</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </SafeAreaContainer>
+            );
+        }
+
+        return this.props.children;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main Component
+// ---------------------------------------------------------------------------
+export default function JobDetailsScreen() {
+    return (
+        <JobDetailsErrorBoundary>
+            <JobDetailsScreenContent />
+        </JobDetailsErrorBoundary>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Screen Content Component
+// ---------------------------------------------------------------------------
+function JobDetailsScreenContent() {
+    const router = useRouter();
+    const trade = useMistriTradeTheme();
+    const params = useLocalSearchParams();
+    const requestId = useMemo(() => safeString(params?.requestId, ''), [params?.requestId]);
+    const { getServiceByName } = useServices();
+    
+    // State management
+    const [isCompleting, setIsCompleting] = useState(false);
+    const [isTogglingUnpaid, setIsTogglingUnpaid] = useState(false);
+    const [isAccepting, setIsAccepting] = useState(false);
+    const [isDeclining, setIsDeclining] = useState(false);
+    const [isMounted, setIsMounted] = useState(true);
+    
+    // Alert tracking refs
+    const hasShownErrorAlertRef = useRef(false);
+    const hasShownMissingIdAlertRef = useRef(false);
+    const alertTimeoutRef = useRef(null);
+    
+    // Reset alert flags periodically
+    useEffect(() => {
+        const interval = setInterval(() => {
+            hasShownErrorAlertRef.current = false;
+            hasShownMissingIdAlertRef.current = false;
+        }, 30000);
+        
+        return () => clearInterval(interval);
+    }, []);
+    
+    // Component mount/unmount tracking
+    useEffect(() => {
+        setIsMounted(true);
+        return () => {
+            setIsMounted(false);
+            if (alertTimeoutRef.current) {
+                clearTimeout(alertTimeoutRef.current);
+            }
+        };
+    }, []);
+    
+    // Safe alert wrapper
+    const showAlert = useCallback((title, message, buttons) => {
+        if (!isMounted) return;
+        
+        if (alertTimeoutRef.current) {
+            clearTimeout(alertTimeoutRef.current);
+        }
+        
+        alertTimeoutRef.current = setTimeout(() => {
+            if (isMounted) {
+                try {
+                    Alert.alert(title, message, buttons);
+                } catch (error) {
+                    console.error('Failed to show alert:', error);
+                }
+            }
+        }, 100);
+    }, [isMounted]);
+    
+    // Validate request ID
+    useEffect(() => {
+        if (!requestId && !hasShownMissingIdAlertRef.current) {
+            hasShownMissingIdAlertRef.current = true;
+            showAlert(
+                'Error',
+                'Request ID not found',
+                [{ text: 'OK', onPress: () => {
+                    try { router.back(); } catch (e) { console.error(e); }
+                }}]
+            );
+        }
+    }, [requestId, router, showAlert]);
+    
+    // Queries
+    const { 
+        data: requestData, 
+        isLoading, 
+        error, 
+        isError,
+        refetch 
+    } = useServiceRequestQuery(requestId, {
+        refetchInterval: 5000,
+        refetchIntervalInBackground: false,
+        enabled: !!requestId,
+        retry: 3,
+        retryDelay: 1000,
+        onError: (err) => {
+            console.error('Query error:', err);
+            if (isMounted && !hasShownErrorAlertRef.current) {
+                hasShownErrorAlertRef.current = true;
+                showAlert(
+                    'Connection Error',
+                    'Failed to load job details. Please check your connection and try again.',
+                    [
+                        { text: 'Retry', onPress: () => {
+                            hasShownErrorAlertRef.current = false;
+                            refetch();
+                        }},
+                        { text: 'Go Back', onPress: () => {
+                            try { router.back(); } catch (e) { console.error(e); }
+                        }}
+                    ]
+                );
+            }
+        }
+    });
+    
+    const { data: ratingData } = useRatingStatusQuery(requestId, {
+        enabled: !!requestId && requestData?.request?.status === 'completed',
+    });
+    
+    // Safe data extraction
+    const request = useMemo(() => {
+        try {
+            return requestData?.request || {};
+        } catch {
+            return {};
+        }
+    }, [requestData]);
+    
+    const customerDetails = useMemo(() => {
+        try {
+            return requestData?.customerDetails || {};
+        } catch {
+            return {};
+        }
+    }, [requestData]);
+    
+    const selectedServices = useMemo(() => {
+        try {
+            return Array.isArray(requestData?.selectedServices) 
+                ? requestData.selectedServices 
+                : [];
+        } catch {
+            return [];
+        }
+    }, [requestData]);
+    
+    // Calculate total price safely
+    const totalPrice = useMemo(() => {
+        try {
+            if (!Array.isArray(selectedServices)) return 0;
+            return selectedServices.reduce((sum, service) => {
+                const price = Number(service?.price);
+                return sum + (Number.isFinite(price) ? price : 0);
+            }, 0);
+        } catch (error) {
+            console.error('Error calculating total price:', error);
+            return 0;
+        }
+    }, [selectedServices]);
+    
+    // Get service name safely
+    const serviceName = useMemo(() => {
+        try {
+            const rawType = safeString(request?.type, 'service');
+            const service = getServiceByName(rawType);
+            if (service?.displayName) return service.displayName;
+            
+            if (typeof rawType === 'string' && rawType.length > 0) {
+                return rawType.charAt(0).toUpperCase() + rawType.slice(1);
+            }
+            return 'Unknown Service';
+        } catch (error) {
+            console.error('Error getting service name:', error);
+            return 'Unknown Service';
+        }
+    }, [request?.type, getServiceByName]);
+    
+    // Check if location is valid
+    const hasValidLocation = useMemo(() => {
+        return isValidCoordinate(request?.lat, request?.lng);
+    }, [request?.lat, request?.lng]);
+    
+    // Mutations
+    const completeJobMutation = useCompleteServiceRequest();
+    const toggleUnpaidMutation = useToggleUnpaid();
+    const acceptJobMutation = useAcceptServiceRequest();
+    const declineJobMutation = useDeclineServiceRequest();
+    
+    // Safe action handlers
+    const handleCallCustomer = useCallback(() => {
+        try {
+            const phone = customerDetails?.phone;
+            if (!phone) {
+                showAlert('Error', 'Phone number not available');
+                return;
+            }
+            
+            Linking.canOpenURL(`tel:${phone}`).then(supported => {
+                if (supported) {
+                    return Linking.openURL(`tel:${phone}`);
+                } else {
+                    showAlert('Error', 'Phone calls are not supported on this device');
+                }
+            }).catch(error => {
+                console.error('Error opening dialer:', error);
+                showAlert('Error', 'Could not open phone dialer');
+            });
+        } catch (error) {
+            console.error('Error in handleCallCustomer:', error);
+            showAlert('Error', 'Failed to initiate call');
+        }
+    }, [customerDetails?.phone, showAlert]);
+    
+    const handleOpenMaps = useCallback(() => {
+        try {
+            if (!isValidCoordinate(request?.lat, request?.lng)) {
+                showAlert('Error', 'Location coordinates not available');
+                return;
+            }
+            
+            const { lat, lng } = request;
+            const label = encodeURIComponent(request?.address || 'Location');
+            
+            const url = Platform.select({
+                ios: `http://maps.apple.com/?ll=${lat},${lng}&q=${label}`,
+                android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
+                default: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+            });
+            
+            Linking.openURL(url).catch(error => {
+                console.error('Error opening maps:', error);
+                // Fallback to Google Maps web
+                const fallbackUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+                Linking.openURL(fallbackUrl).catch(() => {
+                    showAlert('Error', 'Could not open maps');
+                });
+            });
+        } catch (error) {
+            console.error('Error in handleOpenMaps:', error);
+            showAlert('Error', 'Failed to open maps');
+        }
+    }, [request?.lat, request?.lng, request?.address, showAlert]);
+    
+    const handleCompleteJob = useCallback(() => {
+        if (isCompleting) return;
+        
+        Alert.alert(
+            'Complete Job',
+            'Mark this job as completed?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Complete',
+                    style: 'default',
+                    onPress: async () => {
+                        if (!isMounted) return;
+                        setIsCompleting(true);
+                        
+                        try {
+                            await completeJobMutation.mutateAsync(requestId);
+                            if (isMounted) {
+                                showAlert('Success', 'Job marked as completed');
+                            }
+                        } catch (err) {
+                            console.error('Error completing job:', err);
+                            if (isMounted) {
+                                showAlert('Error', 'Failed to complete job. Please try again.');
+                            }
+                        } finally {
+                            if (isMounted) {
+                                setIsCompleting(false);
+                            }
+                        }
+                    },
+                },
+            ],
+            { cancelable: true }
+        );
+    }, [isCompleting, isMounted, requestId, completeJobMutation, showAlert]);
+    
+    const handleToggleUnpaid = useCallback(async () => {
+        if (isTogglingUnpaid || !isMounted) return;
+        
+        setIsTogglingUnpaid(true);
+        try {
+            await toggleUnpaidMutation.mutateAsync(requestId);
+            if (isMounted) {
+                const newStatus = !request?.unpaid;
+                showAlert('Success', newStatus ? 'Job marked as unpaid' : 'Unpaid status removed');
+            }
+        } catch (err) {
+            console.error('Error toggling unpaid:', err);
+            if (isMounted) {
+                showAlert('Error', 'Failed to update unpaid status. Please try again.');
+            }
+        } finally {
+            if (isMounted) {
+                setIsTogglingUnpaid(false);
+            }
+        }
+    }, [isTogglingUnpaid, isMounted, requestId, request?.unpaid, toggleUnpaidMutation, showAlert]);
+    
+    const handleAcceptJob = useCallback(() => {
+        if (isAccepting) return;
+        
+        Alert.alert(
+            'Accept Job',
+            'Accept this job request?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Accept',
+                    style: 'default',
+                    onPress: async () => {
+                        if (!isMounted) return;
+                        setIsAccepting(true);
+                        
+                        try {
+                            await acceptJobMutation.mutateAsync(requestId);
+                            if (isMounted) {
+                                showAlert('Success', 'Job accepted successfully');
+                            }
+                        } catch (err) {
+                            console.error('Error accepting job:', err);
+                            if (isMounted) {
+                                showAlert('Error', 'Failed to accept job. Please try again.');
+                            }
+                        } finally {
+                            if (isMounted) {
+                                setIsAccepting(false);
+                            }
+                        }
+                    },
+                },
+            ],
+            { cancelable: true }
+        );
+    }, [isAccepting, isMounted, requestId, acceptJobMutation, showAlert]);
+    
+    const handleDeclineJob = useCallback(() => {
+        if (isDeclining) return;
+        
+        Alert.alert(
+            'Decline Job',
+            'Are you sure you want to decline this job?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Decline',
+                    style: 'destructive',
+                    onPress: async () => {
+                        if (!isMounted) return;
+                        setIsDeclining(true);
+                        
+                        try {
+                            await declineJobMutation.mutateAsync(requestId);
+                            if (isMounted) {
+                                showAlert('Success', 'Job declined');
+                                try {
+                                    router.back();
+                                } catch (e) {
+                                    console.error('Navigation error:', e);
+                                }
+                            }
+                        } catch (err) {
+                            console.error('Error declining job:', err);
+                            if (isMounted) {
+                                showAlert('Error', 'Failed to decline job. Please try again.');
+                            }
+                        } finally {
+                            if (isMounted) {
+                                setIsDeclining(false);
+                            }
+                        }
+                    },
+                },
+            ],
+            { cancelable: true }
+        );
+    }, [isDeclining, isMounted, requestId, declineJobMutation, router, showAlert]);
+    
+    // Status helpers
+    const getStatusColor = useCallback(() => {
+        try {
+            switch (request?.status) {
+                case 'pending': return '#F59E0B';
+                case 'assigned': return trade?.accent || '#2563EB';
+                case 'completed': return '#10B981';
+                case 'canceled': return '#EF4444';
+                default: return '#6B7280';
+            }
+        } catch {
+            return '#6B7280';
+        }
+    }, [request?.status, trade?.accent]);
+    
+    const getStatusLabel = useCallback(() => {
+        try {
+            switch (request?.status) {
+                case 'pending': return 'Waiting';
+                case 'assigned': return 'Accepted';
+                case 'completed': return 'Completed';
+                case 'canceled': return 'Canceled';
+                default: return 'Unknown';
+            }
+        } catch {
+            return 'Unknown';
+        }
+    }, [request?.status]);
+    
+    const getStatusIcon = useCallback(() => {
+        try {
+            switch (request?.status) {
+                case 'pending': return 'hourglass-empty';
+                case 'assigned': return 'check-circle';
+                case 'completed': return 'done-all';
+                case 'canceled': return 'cancel';
+                default: return 'help';
+            }
+        } catch {
+            return 'help';
+        }
+    }, [request?.status]);
+    
+    // Timeline events
+    const timelineEvents = useMemo(() => [
+        { label: 'Requested', timestamp: request?.createdAt, completed: true },
+        { label: 'Accepted', timestamp: request?.assignedAt, completed: !!request?.assignedAt },
+        { label: 'Completed', timestamp: request?.completedAt, completed: !!request?.completedAt },
+    ], [request?.createdAt, request?.assignedAt, request?.completedAt]);
+    
+    const shortRequestId = useMemo(() => {
+        try {
+            return requestId ? requestId.slice(0, 8).toUpperCase() : '-';
+        } catch {
+            return '-';
+        }
+    }, [requestId]);
+    
+    // Loading state
+    if (isLoading || !request?.id) {
         return (
             <SafeAreaContainer>
                 <PageTitle
                     variant="mistri"
                     title="Job Details"
                     leftElement={
-                        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+                        <TouchableOpacity 
+                            onPress={() => {
+                                try { router.back(); } catch (e) { console.error(e); }
+                            }} 
+                            activeOpacity={0.7}
+                        >
                             <MaterialIcons name="arrow-back" size={24} color={DC.text} />
                         </TouchableOpacity>
                     }
                 />
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color={trade.accent} />
-                    <Text style={styles.loadingText}>Loading...</Text>
+                    <ActivityIndicator size="large" color={trade?.accent || '#2563EB'} />
+                    <Text style={styles.loadingText}>Loading job details...</Text>
                 </View>
             </SafeAreaContainer>
         );
     }
-
-    const lat = Number(request?.lat);
-    const lng = Number(request?.lng);
-    const isValidCoordinate = Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0;
-
-    const mapRegion = isValidCoordinate ? {
-        latitude: lat,
-        longitude: lng,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-    } : null;
-
-    // FIX: `request.type` can be missing/null on some records (legacy data,
-    // partial responses). Calling .charAt on undefined threw a TypeError
-    // that, with no error boundary, crashed the whole app in production.
-    const rawType: string = request.type ?? 'service';
-    const serviceName = getServiceByName(rawType)?.displayName ||
-        (rawType.charAt(0).toUpperCase() + rawType.slice(1));
-
-    const timelineEvents = [
-        { label: 'Requested', timestamp: request.createdAt, completed: true },
-        { label: 'Accepted', timestamp: request.assignedAt, completed: !!request.assignedAt },
-        { label: 'Completed', timestamp: request.completedAt, completed: !!request.completedAt },
-    ];
-
+    
+    // Main render
     return (
         <SafeAreaContainer>
             <PageTitle
                 variant="mistri"
                 title="Job Details"
                 leftElement={
-                    <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+                    <TouchableOpacity 
+                        onPress={() => {
+                            try { router.back(); } catch (e) { console.error(e); }
+                        }} 
+                        activeOpacity={0.7}
+                    >
                         <MaterialIcons name="arrow-back" size={24} color={DC.text} />
                     </TouchableOpacity>
                 }
             />
-
+            
             <ScrollView
                 style={styles.content}
                 contentContainerStyle={[styles.contentContainer, { paddingBottom: 120 }]}
                 showsVerticalScrollIndicator={false}
             >
+                {/* Receipt Card */}
                 <View style={styles.receiptCard}>
                     {/* Perforated Top Edge */}
                     <View style={styles.perforatedEdge}>
@@ -375,11 +699,10 @@ function JobDetailsScreenContent() {
                             <View key={i} style={styles.perforation} />
                         ))}
                     </View>
-
+                    
                     {/* Receipt Header */}
                     <View style={styles.receiptHeader}>
                         <View style={styles.receiptBrand}>
-                            
                             <View>
                                 <Text style={styles.receiptTitle}>ServeX</Text>
                                 <Text style={styles.receiptSubtitle}>Job Receipt</Text>
@@ -390,9 +713,9 @@ function JobDetailsScreenContent() {
                             <Text style={styles.statusPillText}>{getStatusLabel()}</Text>
                         </View>
                     </View>
-
+                    
                     <DashedLine style={{ marginBottom: 10 }} />
-
+                    
                     {/* Meta Grid */}
                     <View style={styles.metaGrid}>
                         <View style={styles.metaItem}>
@@ -405,18 +728,18 @@ function JobDetailsScreenContent() {
                         </View>
                         <View style={styles.metaItem}>
                             <Text style={styles.metaLabel}>Requested</Text>
-                            <Text style={styles.metaValue}>{formatDateTime(request.createdAt)}</Text>
+                            <Text style={styles.metaValue}>{formatDateTime(request?.createdAt)}</Text>
                         </View>
                         <View style={styles.metaItem}>
                             <Text style={styles.metaLabel}>Customer</Text>
-                            <Text style={styles.metaValue}>{customerDetails?.name || '-'}</Text>
+                            <Text style={styles.metaValue}>{safeString(customerDetails?.name)}</Text>
                         </View>
                     </View>
-
+                    
                     <DashedLine style={{ marginVertical: 10 }} />
-
-                    {/* Customer Info (for assigned jobs) */}
-                    {request.status === 'assigned' && customerDetails && (
+                    
+                    {/* Customer Contact - Only for assigned jobs */}
+                    {request?.status === 'assigned' && customerDetails?.name && (
                         <>
                             <View style={styles.sectionBlock}>
                                 <Text style={styles.blockTitle}>Customer Contact</Text>
@@ -425,26 +748,52 @@ function JobDetailsScreenContent() {
                                         <MaterialIcons name="person" size={24} color="#9CA3AF" />
                                     </View>
                                     <View style={styles.customerInfo}>
-                                        <Text style={styles.customerName}>{customerDetails.name}</Text>
-                                        <Text style={styles.customerPhone}>{customerDetails.phone}</Text>
+                                        <Text style={styles.customerName}>
+                                            {safeString(customerDetails?.name)}
+                                        </Text>
+                                        <Text style={styles.customerPhone}>
+                                            {safeString(customerDetails?.phone, 'No phone')}
+                                        </Text>
                                     </View>
-                                    <TouchableOpacity style={styles.callIcon} onPress={handleCallCustomer}>
-                                        <Ionicons name="call" size={20} color="#10B981" />
-                                    </TouchableOpacity>
+                                    {customerDetails?.phone && (
+                                        <TouchableOpacity 
+                                            style={styles.callIcon} 
+                                            onPress={handleCallCustomer}
+                                        >
+                                            <Ionicons name="call" size={20} color="#10B981" />
+                                        </TouchableOpacity>
+                                    )}
                                 </View>
                             </View>
                             <DashedLine style={{ marginVertical: 10 }} />
                         </>
                     )}
-
-                    {/* Location */}
+                    
+                    {/* Location Section */}
                     <View style={styles.sectionBlock}>
-                        <Text style={styles.blockTitle}>Location</Text>
-                        <Text style={styles.blockText} numberOfLines={3}>
-                            {request.address || 'No address provided'}
-                        </Text>
+                        <Text style={styles.blockTitle}>Service Location</Text>
+                        <View style={styles.locationContainer}>
+                            <View style={styles.locationIconContainer}>
+                                <MaterialIcons name="location-on" size={20} color="#DC2626" />
+                            </View>
+                            <View style={styles.locationTextContainer}>
+                                <Text style={styles.locationAddress} numberOfLines={3}>
+                                    {safeString(request?.address, 'No address provided')}
+                                </Text>
+                                {hasValidLocation && (
+                                    <TouchableOpacity
+                                        style={styles.getDirectionsButton}
+                                        onPress={handleOpenMaps}
+                                        activeOpacity={0.7}
+                                    >
+                                        <MaterialIcons name="directions" size={16} color="#FFFFFF" />
+                                        <Text style={styles.getDirectionsText}>Get Directions</Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        </View>
                     </View>
-
+                    
                     {/* Services with Total */}
                     {selectedServices.length > 0 && (
                         <>
@@ -452,49 +801,63 @@ function JobDetailsScreenContent() {
                             <View style={styles.sectionBlock}>
                                 <Text style={styles.blockTitle}>Services & Charges</Text>
                                 <View style={styles.itemsList}>
-                                    {selectedServices.map((service: any, index: number) => {
-                                        const priceValue = Number(service?.price);
-                                        const safePrice = Number.isFinite(priceValue) ? priceValue : 0;
-                                        return (
-                                            <View key={service?.id ?? `service-${index}`} style={styles.itemGroup}>
-                                                <View style={styles.itemRow}>
-                                                    <Text style={styles.itemName} numberOfLines={1}>
-                                                        {service?.name ?? 'Service'}
-                                                    </Text>
-                                                    <Text style={styles.itemPrice}>Rs. {safePrice.toLocaleString()}</Text>
+                                    {selectedServices.map((service, index) => {
+                                        try {
+                                            const priceValue = Number(service?.price);
+                                            const safePrice = Number.isFinite(priceValue) ? priceValue : 0;
+                                            return (
+                                                <View 
+                                                    key={service?.id ?? `service-${index}`} 
+                                                    style={styles.itemGroup}
+                                                >
+                                                    <View style={styles.itemRow}>
+                                                        <Text style={styles.itemName} numberOfLines={1}>
+                                                            {safeString(service?.name, 'Service')}
+                                                        </Text>
+                                                        <Text style={styles.itemPrice}>
+                                                            Rs. {safePrice.toLocaleString()}
+                                                        </Text>
+                                                    </View>
+                                                    {service?.description && (
+                                                        <Text style={styles.itemDescription} numberOfLines={2}>
+                                                            {safeString(service?.description)}
+                                                        </Text>
+                                                    )}
                                                 </View>
-                                                {service?.description ? (
-                                                    <Text style={styles.itemDescription} numberOfLines={2}>
-                                                        {service.description}
-                                                    </Text>
-                                                ) : null}
-                                            </View>
-                                        );
+                                            );
+                                        } catch (error) {
+                                            console.error('Error rendering service item:', error);
+                                            return null;
+                                        }
                                     })}
                                 </View>
-
+                                
                                 <DashedLine style={{ marginVertical: 10 }} />
-
+                                
                                 {/* Total */}
                                 <View style={styles.totalRowReceipt}>
                                     <Text style={styles.totalLabel}>Total Amount</Text>
-                                    <Text style={styles.totalPrice}>Rs. {totalPrice.toLocaleString()}</Text>
+                                    <Text style={styles.totalPrice}>
+                                        Rs. {totalPrice.toLocaleString()}
+                                    </Text>
                                 </View>
                             </View>
                         </>
                     )}
-
+                    
                     {/* Customer Notes */}
-                    {request.customerNotes && (
+                    {request?.customerNotes && (
                         <>
                             <DashedLine style={{ marginVertical: 10 }} />
                             <View style={styles.sectionBlock}>
                                 <Text style={styles.blockTitle}>Customer Notes</Text>
-                                <Text style={styles.blockText}>{request.customerNotes}</Text>
+                                <Text style={styles.blockText}>
+                                    {safeString(request?.customerNotes)}
+                                </Text>
                             </View>
                         </>
                     )}
-
+                    
                     {/* Timeline */}
                     <DashedLine style={{ marginVertical: 10 }} />
                     <View style={styles.sectionBlock}>
@@ -510,9 +873,9 @@ function JobDetailsScreenContent() {
                             ))}
                         </View>
                     </View>
-
+                    
                     {/* Payment Status */}
-                    {request.unpaid && (
+                    {request?.unpaid && (
                         <>
                             <DashedLine style={{ marginVertical: 10 }} />
                             <View style={styles.unpaidRow}>
@@ -521,24 +884,60 @@ function JobDetailsScreenContent() {
                             </View>
                         </>
                     )}
-
-                    {/* Rating Received */}
-                    {request.status === 'completed' && ratingData?.rating && (
+                    
+                    {/* Rating - Only for completed jobs */}
+                    {request?.status === 'completed' && ratingData?.rating && (
                         <>
                             <DashedLine style={{ marginVertical: 10 }} />
                             <View style={styles.sectionBlock}>
                                 <Text style={styles.blockTitle}>Customer Rating</Text>
                                 <View style={styles.ratingRow}>
                                     <RatingStars rating={ratingData.rating.rating} size={16} />
-                                    <Text style={styles.ratingValue}>{ratingData.rating.rating.toFixed(1)}</Text>
+                                    <Text style={styles.ratingValue}>
+                                        {ratingData.rating.rating.toFixed(1)}
+                                    </Text>
                                 </View>
                                 {ratingData.rating.review && (
-                                    <Text style={styles.reviewText}>{ratingData.rating.review}</Text>
+                                    <Text style={styles.reviewText}>
+                                        {safeString(ratingData.rating.review)}
+                                    </Text>
                                 )}
                             </View>
                         </>
                     )}
-
+                    
+                    {/* Completed Status Banner */}
+                    {request?.status === 'completed' && (
+                        <>
+                            <DashedLine style={{ marginVertical: 10 }} />
+                            <View style={styles.completedBanner}>
+                                <MaterialIcons name="check-circle" size={24} color="#10B981" />
+                                <View style={styles.completedBannerText}>
+                                    <Text style={styles.completedBannerTitle}>Job Completed</Text>
+                                    <Text style={styles.completedBannerDate}>
+                                        Completed on {formatDateTime(request?.completedAt)}
+                                    </Text>
+                                </View>
+                            </View>
+                        </>
+                    )}
+                    
+                    {/* Canceled Status Banner */}
+                    {request?.status === 'canceled' && (
+                        <>
+                            <DashedLine style={{ marginVertical: 10 }} />
+                            <View style={styles.canceledBanner}>
+                                <MaterialIcons name="cancel" size={24} color="#EF4444" />
+                                <View style={styles.completedBannerText}>
+                                    <Text style={styles.canceledBannerTitle}>Job Canceled</Text>
+                                    <Text style={styles.completedBannerDate}>
+                                        This job has been canceled
+                                    </Text>
+                                </View>
+                            </View>
+                        </>
+                    )}
+                    
                     {/* Perforated Bottom Edge */}
                     <View style={styles.perforatedBottomEdge}>
                         {Array.from({ length: 20 }).map((_, i) => (
@@ -546,46 +945,18 @@ function JobDetailsScreenContent() {
                         ))}
                     </View>
                 </View>
-
-                {/* Map Card - Only render if we have valid coordinates */}
-                {mapRegion && (
-                    <View style={styles.mapCard}>
-                        <MapView
-                            style={styles.map}
-                            region={mapRegion}
-                            scrollEnabled={false}
-                            zoomEnabled={false}
-                            pitchEnabled={false}
-                            rotateEnabled={false}
-                        >
-                            <Marker
-                                coordinate={{
-                                    latitude: mapRegion.latitude,
-                                    longitude: mapRegion.longitude,
-                                }}
-                                title="Job Location"
-                                description={request.address}
-                            >
-                                <MaterialIcons name="location-on" size={40} color="#dc2626" />
-                            </Marker>
-                        </MapView>
-                        <TouchableOpacity
-                            style={[styles.directionsBtn, { backgroundColor: trade.accent }]}
-                            onPress={handleOpenMaps}
-                        >
-                            <MaterialIcons name="directions" size={18} color="#ffffff" />
-                            <Text style={styles.directionsBtnText}>Get Directions</Text>
-                        </TouchableOpacity>
-                    </View>
-                )}
             </ScrollView>
-
+            
             {/* Sticky Action Buttons */}
             <View style={styles.stickyActions}>
-                {request.status === 'pending' && (
+                {request?.status === 'pending' && (
                     <View style={styles.actionsRow}>
                         <TouchableOpacity
-                            style={[styles.actionButton, styles.declineButton, isDeclining && styles.actionButtonDisabled]}
+                            style={[
+                                styles.actionButton, 
+                                styles.declineButton, 
+                                isDeclining && styles.actionButtonDisabled
+                            ]}
                             onPress={handleDeclineJob}
                             disabled={isDeclining}
                         >
@@ -598,12 +969,12 @@ function JobDetailsScreenContent() {
                                 </>
                             )}
                         </TouchableOpacity>
-
+                        
                         <TouchableOpacity
                             style={[
                                 styles.actionButton,
                                 styles.acceptButton,
-                                { backgroundColor: trade.accent },
+                                { backgroundColor: trade?.accent || '#2563EB' },
                                 isAccepting && styles.actionButtonDisabled,
                             ]}
                             onPress={handleAcceptJob}
@@ -620,11 +991,15 @@ function JobDetailsScreenContent() {
                         </TouchableOpacity>
                     </View>
                 )}
-
-                {request.status === 'assigned' && (
+                
+                {request?.status === 'assigned' && (
                     <View style={styles.actionsRow}>
                         <TouchableOpacity
-                            style={[styles.actionButton, styles.unpaidButton, isTogglingUnpaid && styles.actionButtonDisabled]}
+                            style={[
+                                styles.actionButton, 
+                                styles.unpaidButton, 
+                                isTogglingUnpaid && styles.actionButtonDisabled
+                            ]}
                             onPress={handleToggleUnpaid}
                             disabled={isTogglingUnpaid}
                         >
@@ -633,22 +1008,22 @@ function JobDetailsScreenContent() {
                             ) : (
                                 <>
                                     <MaterialIcons
-                                        name={request.unpaid ? 'check' : 'payment'}
+                                        name={request?.unpaid ? 'check' : 'payment'}
                                         size={20}
                                         color="#FFFFFF"
                                     />
                                     <Text style={styles.actionText}>
-                                        {request.unpaid ? 'Mark Paid' : 'Mark Unpaid'}
+                                        {request?.unpaid ? 'Mark Paid' : 'Mark Unpaid'}
                                     </Text>
                                 </>
                             )}
                         </TouchableOpacity>
-
+                        
                         <TouchableOpacity
                             style={[
                                 styles.actionButton,
                                 styles.completeButton,
-                                { backgroundColor: trade.accent },
+                                { backgroundColor: trade?.accent || '#2563EB' },
                                 isCompleting && styles.actionButtonDisabled,
                             ]}
                             onPress={handleCompleteJob}
@@ -665,10 +1040,14 @@ function JobDetailsScreenContent() {
                         </TouchableOpacity>
                     </View>
                 )}
-
-                {request.status === 'completed' && request.unpaid && (
+                
+                {request?.status === 'completed' && request?.unpaid && (
                     <TouchableOpacity
-                        style={[styles.actionButton, styles.paidButton, isTogglingUnpaid && styles.actionButtonDisabled]}
+                        style={[
+                            styles.actionButton, 
+                            styles.paidButton, 
+                            isTogglingUnpaid && styles.actionButtonDisabled
+                        ]}
                         onPress={handleToggleUnpaid}
                         disabled={isTogglingUnpaid}
                     >
@@ -687,7 +1066,59 @@ function JobDetailsScreenContent() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
+    errorContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 32,
+        backgroundColor: DC.canvas,
+        gap: 16,
+    },
+    errorTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#111827',
+        textAlign: 'center',
+    },
+    errorMessage: {
+        fontSize: 14,
+        color: '#6B7280',
+        textAlign: 'center',
+        lineHeight: 20,
+    },
+    errorActions: {
+        flexDirection: 'row',
+        gap: 12,
+        marginTop: 8,
+    },
+    errorButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2563EB',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 12,
+        gap: 8,
+    },
+    errorButtonSecondary: {
+        backgroundColor: '#F3F4F6',
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    errorButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    errorButtonTextSecondary: {
+        color: '#6B7280',
+        fontSize: 14,
+        fontWeight: '600',
+    },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -760,11 +1191,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 8,
     },
-    receiptLogo: {
-        width: 28,
-        height: 28,
-        marginTop: 2,
-    },
     receiptTitle: {
         fontSize: 18,
         fontWeight: '800',
@@ -784,7 +1210,7 @@ const styles = StyleSheet.create({
         gap: 6,
         paddingVertical: 5,
         paddingHorizontal: 10,
-        borderRadius: 0,
+        borderRadius: 12,
     },
     statusPillText: {
         color: '#FFFFFF',
@@ -834,6 +1260,51 @@ const styles = StyleSheet.create({
         lineHeight: 19,
         fontWeight: '500',
     },
+    // Location styles
+    locationContainer: {
+        flexDirection: 'row',
+        backgroundColor: '#F9FAFB',
+        borderRadius: 12,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    locationIconContainer: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FEE2E2',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 12,
+        marginTop: 2,
+    },
+    locationTextContainer: {
+        flex: 1,
+    },
+    locationAddress: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#111827',
+        lineHeight: 20,
+        marginBottom: 8,
+    },
+    getDirectionsButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#2563EB',
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        alignSelf: 'flex-start',
+        gap: 6,
+    },
+    getDirectionsText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#FFFFFF',
+    },
     customerRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -863,7 +1334,7 @@ const styles = StyleSheet.create({
     },
     callIcon: {
         padding: 8,
-        borderRadius: 0,
+        borderRadius: 8,
         backgroundColor: '#F0FDF4',
         borderWidth: 1,
         borderColor: '#D1FAE5',
@@ -946,7 +1417,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         padding: 8,
-        borderRadius: 0,
+        borderRadius: 8,
         backgroundColor: '#FEF2F2',
         borderWidth: 1,
         borderColor: '#FCA5A5',
@@ -976,36 +1447,43 @@ const styles = StyleSheet.create({
         marginTop: 6,
         fontStyle: 'italic',
     },
-    mapCard: {
-        backgroundColor: DC.surface,
-        borderRadius: 16,
-        borderCurve: 'continuous',
-        padding: 12,
-        marginHorizontal: 0,
-        marginBottom: 14,
-        borderWidth: 0,
-        boxShadow: MISTRI_ELEV.card,
-        overflow: 'hidden',
-    },
-    map: {
-        width: '100%',
-        height: 180,
-        borderRadius: 8,
-    },
-    directionsBtn: {
+    completedBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 10,
-        borderRadius: 12,
-        borderCurve: 'continuous',
-        marginTop: 8,
-        gap: 6,
+        padding: 12,
+        borderRadius: 8,
+        backgroundColor: '#F0FDF4',
+        borderWidth: 1,
+        borderColor: '#86EFAC',
+        gap: 12,
     },
-    directionsBtnText: {
+    completedBannerText: {
+        flex: 1,
+    },
+    completedBannerTitle: {
         fontSize: 14,
-        fontWeight: '600',
-        color: '#ffffff',
+        fontWeight: '700',
+        color: '#065F46',
+    },
+    completedBannerDate: {
+        fontSize: 12,
+        color: '#047857',
+        marginTop: 2,
+    },
+    canceledBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        borderRadius: 8,
+        backgroundColor: '#FEF2F2',
+        borderWidth: 1,
+        borderColor: '#FCA5A5',
+        gap: 12,
+    },
+    canceledBannerTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#991B1B',
     },
     stickyActions: {
         position: 'absolute',

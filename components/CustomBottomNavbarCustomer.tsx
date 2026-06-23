@@ -1,3 +1,5 @@
+// components/CustomBottomNavbar.tsx
+
 import React from 'react';
 import {
     View,
@@ -24,39 +26,51 @@ const { width } = Dimensions.get('window');
 
 // DEFINING BLUE THEME FOR ACTIVE TABS
 const ACTIVE_BLUE = '#2563eb';
-const ACTIVE_BLUE_BG = '#2563eb15';
 const INACTIVE_COLOR = '#94a3b8';
 const INACTIVE_LABEL = '#64748b';
 
+// ✅ Updated paths to match what usePathname() returns
 const TABS = [
     {
         label: 'Home',
         icon: 'home-outline',
         activeIcon: 'home',
         type: 'ion',
-        path: '/(protected)/(customer)',
+        path: '/',
+        exact: true,
     },
     {
         label: 'Services',
         icon: 'miscellaneous-services',
         activeIcon: 'miscellaneous-services',
         type: 'material',
-        path: '/(protected)/(customer)/services',
+        path: '/services',
+        exact: false,
     },
     {
         label: 'Requests',
         icon: 'receipt-long',
         activeIcon: 'receipt-long',
         type: 'material',
-        path: '/(protected)/(customer)/requests',
+        path: '/requests',
+        exact: false,
     },
     {
         label: 'Settings',
         icon: 'person-outline',
         activeIcon: 'person',
         type: 'ion',
-        path: '/(protected)/(customer)/settings',
+        path: '/settings',
+        exact: false,
     },
+];
+
+// ✅ Pages where the navbar should be shown
+const NAVBAR_PATHS = [
+    '/',
+    '/services',
+    '/requests',
+    '/settings',
 ];
 
 export default function CustomBottomNavbar() {
@@ -64,27 +78,59 @@ export default function CustomBottomNavbar() {
     const pathname = usePathname();
     const insets = useSafeAreaInsets();
 
-    const activeIndex = TABS.findIndex((tab) => {
-        if (tab.path === '/(protected)/(customer)') {
-            return pathname === '/(protected)/(customer)' || pathname === '/(protected)/(customer)/';
+    // ✅ Check if navbar should be shown on this page
+    const shouldShowNavbar = NAVBAR_PATHS.some(path => {
+        if (path === '/') {
+            return pathname === '/' || pathname === '';
         }
-        return pathname.startsWith(tab.path);
+        return pathname.startsWith(path);
     });
 
-    const handleNavigation = (path) => {
+    // ✅ If not on a navbar page, return null (don't render anything)
+    if (!shouldShowNavbar) {
+        return null;
+    }
+
+    // ✅ Fixed active tab detection
+    const getActiveIndex = () => {
+        for (let i = 0; i < TABS.length; i++) {
+            const tab = TABS[i];
+            const tabPath = tab.path;
+            
+            // For Home tab - exact match
+            if (tab.exact) {
+                if (pathname === tabPath || pathname === tabPath + '/') {
+                    return i;
+                }
+                continue;
+            }
+            
+            // For other tabs - check if pathname starts with tab path
+            if (pathname.startsWith(tabPath)) {
+                return i;
+            }
+        }
+        
+        // Default to Home (index 0)
+        return 0;
+    };
+
+    const activeIndex = getActiveIndex();
+
+    const handleNavigation = (path: string) => {
         if (pathname !== path) {
-            router.replace(path);
+            router.push(path);
         }
     };
 
-    const renderIcon = (tab, isActive) => {
+    const renderIcon = (tab: typeof TABS[0], isActive: boolean) => {
         const color = isActive ? ACTIVE_BLUE : INACTIVE_COLOR;
         const iconName = isActive ? tab.activeIcon : tab.icon;
 
         if (tab.type === 'ion') {
             return (
                 <Ionicons
-                    name={iconName}
+                    name={iconName as any}
                     size={24}
                     color={color}
                 />
@@ -93,7 +139,7 @@ export default function CustomBottomNavbar() {
 
         return (
             <MaterialIcons
-                name={iconName}
+                name={iconName as any}
                 size={24}
                 color={color}
             />
@@ -114,14 +160,7 @@ export default function CustomBottomNavbar() {
                             onPress={() => handleNavigation(tab.path)}
                         >
                             <View style={styles.tabContent}>
-                                <View
-                                    style={[
-                                        styles.iconWrapper,
-                                        isActive && styles.activeIconWrapper,
-                                    ]}
-                                >
-                                    {renderIcon(tab, isActive)}
-                                </View>
+                                {renderIcon(tab, isActive)}
 
                                 <Text
                                     style={[
@@ -157,7 +196,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-around',
         paddingHorizontal: 4,
-        // Enhanced shadow for better depth
         shadowColor: '#000',
         shadowOffset: { 
             width: 0, 
@@ -179,21 +217,7 @@ const styles = StyleSheet.create({
     tabContent: {
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    iconWrapper: {
-        width: 44,
-        height: 30,
-        borderRadius: 15,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 2,
-        // Transition for smooth state changes
-        backgroundColor: 'transparent',
-    },
-    activeIconWrapper: {
-        backgroundColor: ACTIVE_BLUE_BG,
-        // Optional: add a subtle scale animation effect
-        transform: [{ scale: 1 }],
+        gap: 2,
     },
     label: {
         fontSize: 11,

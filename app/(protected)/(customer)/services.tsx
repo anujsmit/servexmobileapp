@@ -1,9 +1,10 @@
+// app/(protected)/(customer)/services/index.tsx
+
 import React, {
     useEffect,
     useState,
     useCallback,
     useRef,
-    useMemo,
 } from 'react';
 
 import {
@@ -24,13 +25,14 @@ import {
 } from 'react-native';
 
 import { useRouter } from 'expo-router';
-import { MaterialIcons, Ionicons, Feather, FontAwesome5 } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaContainer } from '../../../components/SafeAreaContainer';
-import { customerBrand as B, customerDashboardColors as C } from '../../../lib/customerDashboardTokens';
+import { customerBrand as B } from '../../../lib/customerDashboardTokens';
 
 const { width: screenWidth } = Dimensions.get('window');
 
+/* ─── Types ─── */
 interface ServiceItem {
     id: string;
     name: string;
@@ -47,62 +49,145 @@ interface CategoryGroup {
     services: ServiceItem[];
 }
 
+/* ─── Helpers ─── */
+const PALETTE = [
+    '#6366f1', '#f43f5e', '#10b981', '#f59e0b',
+    '#8b5cf6', '#ec4899', '#06b6d4', '#ef4444',
+];
+
+const categoryColor = (i: number) => PALETTE[i % PALETTE.length];
+
+const formatPrice = (price: number | string) => {
+    const n = typeof price === 'string' ? parseFloat(price) : price;
+    return `रु ${n ? n.toLocaleString() : 0}`;
+};
+
+/* ─── Skeleton ─── */
+function SkeletonBlock({ w, h, r = 12, mb = 0 }: { w: number | string; h: number; r?: number; mb?: number }) {
+    return (
+        <View
+            style={{
+                width: w,
+                height: h,
+                borderRadius: r,
+                backgroundColor: '#e2e8f0',
+                marginBottom: mb,
+            }}
+        />
+    );
+}
+
+function SkeletonScreen() {
+    return (
+        <View style={{ flex: 1, backgroundColor: '#f8fafc', paddingTop: 60 }}>
+            {/* Header skeleton */}
+            <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
+                <SkeletonBlock w={100} h={12} r={6} mb={6} />
+                <SkeletonBlock w={140} h={28} r={6} />
+            </View>
+
+            {/* Hero skeleton */}
+            <View
+                style={{
+                    marginHorizontal: 20,
+                    height: 170,
+                    borderRadius: 24,
+                    backgroundColor: '#e2e8f0',
+                    marginBottom: 28,
+                }}
+            />
+
+            {/* Popular skeleton */}
+            <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+                <SkeletonBlock w={160} h={22} r={6} mb={14} />
+                {[1, 2, 3].map((i) => (
+                    <View
+                        key={i}
+                        style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            backgroundColor: '#fff',
+                            borderRadius: 16,
+                            padding: 14,
+                            marginBottom: 10,
+                            borderWidth: 1,
+                            borderColor: '#f1f5f9',
+                            gap: 14,
+                        }}
+                    >
+                        <SkeletonBlock w={52} h={52} r={14} />
+                        <View style={{ flex: 1 }}>
+                            <SkeletonBlock w={160} h={16} r={4} mb={6} />
+                            <SkeletonBlock w={100} h={12} r={4} mb={6} />
+                            <SkeletonBlock w={70} h={14} r={4} />
+                        </View>
+                    </View>
+                ))}
+            </View>
+
+            {/* Category section skeleton */}
+            <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+                <SkeletonBlock w={180} h={22} r={6} mb={14} />
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 20, gap: 14 }}>
+                {[1, 2, 3].map((i) => (
+                    <View key={i}>
+                        <SkeletonBlock w={220} h={300} r={20} />
+                    </View>
+                ))}
+            </ScrollView>
+        </View>
+    );
+}
+
+/* ─── Main Screen ─── */
 export default function ServicesScreen() {
     const router = useRouter();
-    const [loading, setLoading] = useState<boolean>(true);
-    const [refreshing, setRefreshing] = useState<boolean>(false);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [categories, setCategories] = useState<CategoryGroup[]>([]);
     const [popularServices, setPopularServices] = useState<ServiceItem[]>([]);
     const [allServices, setAllServices] = useState<ServiceItem[]>([]);
-    const [searchQuery, setSearchQuery] = useState<string>('');
+    const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<ServiceItem[]>([]);
-    const [isSearching, setIsSearching] = useState<boolean>(false);
-    const [showSearchModal, setShowSearchModal] = useState<boolean>(false);
-    const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+    const [showSearchModal, setShowSearchModal] = useState(false);
     const scrollY = useRef(new Animated.Value(0)).current;
     const searchInputRef = useRef<TextInput>(null);
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const searchFadeAnim = useRef(new Animated.Value(0)).current;
 
-    const fetchAllMarketplaceServices = async () => {
+    /* ─── Fetch ─── */
+    const fetchServices = async () => {
         try {
-            const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services`;
-            const response = await fetch(url);
-            const data = await response.json();
+            const res = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services`);
+            const data = await res.json();
 
-            if (response.ok) {
-                let formattedGroups: CategoryGroup[] = [];
-                let allServicesList: ServiceItem[] = [];
+            if (res.ok) {
+                let groups: CategoryGroup[] = [];
+                let flat: ServiceItem[] = [];
 
-                if (data && Array.isArray(data.categories)) {
-                    formattedGroups = data.categories;
-                    data.categories.forEach((category: any) => {
-                        if (category.services && Array.isArray(category.services)) {
-                            category.services.forEach((service: any) => {
-                                allServicesList.push({
-                                    ...service,
-                                    isPopular: service.isPopular || false,
-                                    categoryName: category.categoryName,
-                                });
-                            });
-                        }
+                const source = data?.categories ?? (Array.isArray(data) ? data : data?.data ?? []);
+                groups = source;
+
+                source.forEach((cat: any) => {
+                    (cat.services ?? []).forEach((s: any) => {
+                        flat.push({
+                            ...s,
+                            isPopular: s.isPopular || false,
+                            categoryName: cat.categoryName || cat.name || 'Service',
+                        });
                     });
-                } else if (Array.isArray(data)) {
-                    formattedGroups = data;
-                } else if (data && Array.isArray(data.data)) {
-                    formattedGroups = data.data;
-                }
+                });
 
-                setCategories(formattedGroups);
-                setAllServices(allServicesList);
-
-                const popular = allServicesList.filter(s => s.isPopular === true);
-                setPopularServices(popular.slice(0, 10));
+                setCategories(groups);
+                setAllServices(flat);
+                setPopularServices(flat.filter((s) => s.isPopular).slice(0, 6));
             } else {
                 setCategories([]);
                 setAllServices([]);
                 setPopularServices([]);
             }
-        } catch (error) {
-            console.log('Error fetching services:', error);
+        } catch {
             setCategories([]);
             setAllServices([]);
             setPopularServices([]);
@@ -113,17 +198,30 @@ export default function ServicesScreen() {
     };
 
     useEffect(() => {
-        fetchAllMarketplaceServices();
+        fetchServices();
+        Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     }, []);
 
     useEffect(() => {
+        if (showSearchModal) {
+            Animated.timing(searchFadeAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+            setTimeout(() => searchInputRef.current?.focus(), 300);
+        } else {
+            searchFadeAnim.setValue(0);
+        }
+    }, [showSearchModal]);
+
+    useEffect(() => {
         if (searchQuery.trim().length > 0) {
-            const results = allServices.filter(service =>
-                service.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (service.description?.toLowerCase().includes(searchQuery.toLowerCase())) ||
-                (service.categoryName?.toLowerCase().includes(searchQuery.toLowerCase()))
+            const q = searchQuery.toLowerCase();
+            setSearchResults(
+                allServices.filter(
+                    (s) =>
+                        s.name.toLowerCase().includes(q) ||
+                        s.description?.toLowerCase().includes(q) ||
+                        s.categoryName?.toLowerCase().includes(q),
+                ),
             );
-            setSearchResults(results);
         } else {
             setSearchResults([]);
         }
@@ -131,10 +229,11 @@ export default function ServicesScreen() {
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        fetchAllMarketplaceServices();
+        fetchServices();
     }, []);
 
-    const handleServiceNavigation = (item: ServiceItem) => {
+    /* ─── Navigation ─── */
+    const goService = (item: ServiceItem) => {
         setShowSearchModal(false);
         setSearchQuery('');
         router.push({
@@ -142,101 +241,70 @@ export default function ServicesScreen() {
             params: {
                 id: item.id,
                 name: item.name,
-                price: item.price.toString(),
+                price: String(item.price),
                 description: item.description || '',
-                imageUrl: item.imageUrl || ''
+                imageUrl: item.imageUrl || '',
+                categoryName: item.categoryName || 'Service',
             },
         });
     };
 
-    const handleSeeAllPopular = () => {
-        router.push('/popular-services');
-    };
-
-    const openSearch = () => {
-        setShowSearchModal(true);
-        setTimeout(() => {
-            searchInputRef.current?.focus();
-        }, 300);
-    };
-
+    const openSearch = () => setShowSearchModal(true);
     const closeSearch = () => {
         setShowSearchModal(false);
         setSearchQuery('');
         setSearchResults([]);
     };
 
-    const getCategoryColor = (index: number) => {
-        const colors = ['#FF6B6B', '#4A90E2', '#4CAF50', '#FF9800', '#9C27B0', '#E91E63', '#00BCD4', '#FF5722'];
-        return colors[index % colors.length];
-    };
+    /* ─── Renderers ─── */
 
-    const renderService = ({ item, index }: { item: ServiceItem; index: number }) => {
-        const parsedPrice = typeof item.price === 'string' ? parseFloat(item.price) : item.price;
-        const color = getCategoryColor(index);
-
+    // Service Card (horizontal scroll)
+    const renderServiceCard = ({ item, index }: { item: ServiceItem; index: number }) => {
+        const color = categoryColor(index);
         return (
             <TouchableOpacity
-                activeOpacity={0.85}
-                style={styles.card}
-                onPress={() => handleServiceNavigation(item)}
+                activeOpacity={0.9}
+                style={s.card}
+                onPress={() => goService(item)}
             >
-                <View style={styles.cardImageWrapper}>
+                {/* Image */}
+                <View style={s.cardImgWrap}>
                     {item.imageUrl ? (
-                        <Image
-                            source={{ uri: item.imageUrl }}
-                            style={styles.cardImage}
-                        />
+                        <Image source={{ uri: item.imageUrl }} style={s.cardImg} />
                     ) : (
-                        <LinearGradient
-                            colors={[color + '20', color + '10']}
-                            style={styles.cardImagePlaceholder}
-                        >
-                            <MaterialIcons name="build" size={40} color={color} />
+                        <LinearGradient colors={[color + '22', color + '0a']} style={s.cardImgPlaceholder}>
+                            <MaterialIcons name="handyman" size={36} color={color + '80'} />
                         </LinearGradient>
                     )}
 
                     {item.isPopular && (
-                        <View style={styles.popularBadge}>
-                            <MaterialIcons name="star" size={10} color="#fff" />
-                            <Text style={styles.popularBadgeText}>Popular</Text>
+                        <View style={s.popChip}>
+                            <MaterialIcons name="auto-awesome" size={10} color="#fff" />
+                            <Text style={s.popChipText}>Popular</Text>
                         </View>
                     )}
 
                     {item.categoryName && (
-                        <View style={[styles.categoryTag, { backgroundColor: color + '20' }]}>
-                            <Text style={[styles.categoryTagText, { color: color }]}>
-                                {item.categoryName}
-                            </Text>
+                        <View style={[s.catChip, { backgroundColor: '#00000090' }]}>
+                            <Text style={s.catChipText}>{item.categoryName}</Text>
                         </View>
                     )}
                 </View>
 
-                <View style={styles.cardBody}>
-                    <Text style={styles.serviceName} numberOfLines={1}>
-                        {item.name}
-                    </Text>
-
-                    <Text numberOfLines={2} style={styles.description}>
+                {/* Body */}
+                <View style={s.cardBody}>
+                    <Text style={s.cardName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={s.cardDesc} numberOfLines={2}>
                         {item.description || 'Professional service at your doorstep.'}
                     </Text>
-
-                    <View style={styles.footer}>
+                    <View style={s.cardFooter}>
                         <View>
-                            <Text style={styles.priceLabel}>Starting from</Text>
-                            <Text style={[styles.price, { color: B.accent }]}>
-                                रु {parsedPrice ? parsedPrice.toLocaleString() : 0}
-                            </Text>
+                            <Text style={s.cardPriceLabel}>Starting from</Text>
+                            <Text style={[s.cardPrice, { color: B.accent }]}>{formatPrice(item.price)}</Text>
                         </View>
-
-                        <LinearGradient
-                            colors={[B.accent, B.accent + 'CC']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                            style={styles.bookButton}
-                        >
-                            <Text style={styles.bookButtonText}>Book</Text>
-                            <MaterialIcons name="arrow-forward" size={14} color="#fff" />
+                        <LinearGradient colors={[B.accent, B.accent + 'bb']} style={s.bookBtn}>
+                            <Text style={s.bookBtnText}>Book</Text>
+                            <Ionicons name="arrow-forward" size={13} color="#fff" />
                         </LinearGradient>
                     </View>
                 </View>
@@ -244,594 +312,431 @@ export default function ServicesScreen() {
         );
     };
 
-    const renderPopularService = ({ item }: { item: ServiceItem }) => {
-        const parsedPrice = typeof item.price === 'string' ? parseFloat(item.price) : item.price;
-
-        return (
-            <TouchableOpacity
-                activeOpacity={0.85}
-                style={styles.popularCard}
-                onPress={() => handleServiceNavigation(item)}
-            >
-                <LinearGradient
-                    colors={[B.accent + '15', B.accent + '05']}
-                    style={styles.popularCardGradient}
-                >
-                    <View style={styles.popularCardLeft}>
-                        {item.imageUrl ? (
-                            <Image
-                                source={{ uri: item.imageUrl }}
-                                style={styles.popularImage}
-                            />
-                        ) : (
-                            <View style={[styles.popularImagePlaceholder, { backgroundColor: `${B.accent}10` }]}>
-                                <MaterialIcons name="build" size={28} color={B.accent} />
-                            </View>
-                        )}
-                    </View>
-
-                    <View style={styles.popularCardBody}>
-                        <View style={styles.popularHeader}>
-                            <Text style={styles.popularName} numberOfLines={1}>
-                                {item.name}
-                            </Text>
-                            <View style={styles.popularMiniBadge}>
-                                <MaterialIcons name="star" size={10} color="#faad14" />
-                            </View>
+    // Popular list item
+    const renderPopularItem = ({ item }: { item: ServiceItem }) => (
+        <TouchableOpacity activeOpacity={0.7} onPress={() => goService(item)}>
+            <View style={s.popRow}>
+                <View style={s.popRowImgWrap}>
+                    {item.imageUrl ? (
+                        <Image source={{ uri: item.imageUrl }} style={s.popRowImg} />
+                    ) : (
+                        <View style={[s.popRowImgPH, { backgroundColor: B.accent + '12' }]}>
+                            <MaterialIcons name="handyman" size={22} color={B.accent + '90'} />
                         </View>
-
-                        <Text style={styles.popularDescription} numberOfLines={1}>
-                            {item.description || 'Professional service'}
-                        </Text>
-
-                        <View style={styles.popularPriceRow}>
-                            <Text style={styles.popularPriceLabel}>From</Text>
-                            <Text style={[styles.popularPrice, { color: B.accent }]}>
-                                रु {parsedPrice ? parsedPrice.toLocaleString() : 0}
-                            </Text>
-                        </View>
-                    </View>
-
-                    <View style={styles.popularArrow}>
-                        <MaterialIcons name="chevron-right" size={24} color={B.accent} />
-                    </View>
-                </LinearGradient>
-            </TouchableOpacity>
-        );
-    };
-
-    const renderSearchResult = ({ item }: { item: ServiceItem }) => {
-        const parsedPrice = typeof item.price === 'string' ? parseFloat(item.price) : item.price;
-
-        return (
-            <TouchableOpacity
-                style={styles.searchResultItem}
-                onPress={() => handleServiceNavigation(item)}
-            >
-                {item.imageUrl ? (
-                    <Image source={{ uri: item.imageUrl }} style={styles.searchResultImage} />
-                ) : (
-                    <View style={[styles.searchResultImagePlaceholder, { backgroundColor: `${B.accent}10` }]}>
-                        <MaterialIcons name="build" size={24} color={B.accent} />
-                    </View>
-                )}
-
-                <View style={styles.searchResultBody}>
-                    <Text style={styles.searchResultName}>{item.name}</Text>
-                    {item.categoryName && (
-                        <Text style={styles.searchResultCategory}>{item.categoryName}</Text>
                     )}
-                    <Text style={[styles.searchResultPrice, { color: B.accent }]}>
-                        रु {parsedPrice ? parsedPrice.toLocaleString() : 0}
-                    </Text>
                 </View>
-
-                {item.isPopular && (
-                    <View style={styles.searchResultBadge}>
-                        <Text style={styles.searchResultBadgeText}>Popular</Text>
-                    </View>
-                )}
-            </TouchableOpacity>
-        );
-    };
-
-    const renderPopularServicesSection = () => {
-        if (popularServices.length === 0) return null;
-
-        return (
-            <View style={styles.popularSection}>
-                <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Popular Services</Text>
+                <View style={s.popRowBody}>
+                    <Text style={s.popRowName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={s.popRowCat} numberOfLines={1}>{item.categoryName}</Text>
+                    <Text style={[s.popRowPrice, { color: B.accent }]}>{formatPrice(item.price)}</Text>
                 </View>
-
-                <View style={styles.popularList}>
-                    {popularServices.slice(0, 4).map((item) => (
-                        <View key={item.id}>
-                            {renderPopularService({ item })}
-                        </View>
-                    ))}
+                <View style={s.popRowArrow}>
+                    <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
                 </View>
             </View>
-        );
-    };
+        </TouchableOpacity>
+    );
 
-    const headerOpacity = scrollY.interpolate({
-        inputRange: [0, 80],
-        outputRange: [1, 0.96],
-        extrapolate: 'clamp',
-    });
-
-    if (loading) {
-        return (
-            <View style={styles.loader}>
-                <ActivityIndicator size="large" color={B.accent} />
+    // Search result item
+    const renderSearchItem = ({ item }: { item: ServiceItem }) => (
+        <TouchableOpacity style={s.srItem} onPress={() => goService(item)} activeOpacity={0.7}>
+            {item.imageUrl ? (
+                <Image source={{ uri: item.imageUrl }} style={s.srImg} />
+            ) : (
+                <View style={[s.srImgPH, { backgroundColor: B.accent + '10' }]}>
+                    <MaterialIcons name="handyman" size={20} color={B.accent} />
+                </View>
+            )}
+            <View style={s.srBody}>
+                <Text style={s.srName}>{item.name}</Text>
+                {item.categoryName && <Text style={s.srCat}>{item.categoryName}</Text>}
+                <Text style={[s.srPrice, { color: B.accent }]}>{formatPrice(item.price)}</Text>
             </View>
-        );
-    }
+            {item.isPopular && (
+                <View style={s.srBadge}>
+                    <Text style={s.srBadgeText}>★ Popular</Text>
+                </View>
+            )}
+        </TouchableOpacity>
+    );
 
+    /* ─── Loading ─── */
+    if (loading) return <SkeletonScreen />;
+
+    /* ─── Render ─── */
     return (
-        <SafeAreaContainer style={styles.safeContainer} showBottomNav={true}>
-            <StatusBar backgroundColor="#ffffff" barStyle="dark-content" />
+        <SafeAreaContainer style={s.root} showBottomNav>
+            <StatusBar backgroundColor="#f8fafc" barStyle="dark-content" />
 
-            <Animated.View style={[styles.header, { opacity: headerOpacity }]}>
-                <View style={styles.headerContent}>
+            <Animated.View style={[s.headerWrap, { opacity: fadeAnim }]}>
+                <View style={s.header}>
                     <View>
-                        <Text style={styles.headerSubtitle}>Discover</Text>
-                        <Text style={styles.headerTitle}>Services</Text>
+                        <Text style={s.headerLabel}>Explore</Text>
+                        <Text style={s.headerTitle}>Services</Text>
                     </View>
-                    <TouchableOpacity
-                        style={styles.searchIcon}
-                        onPress={openSearch}
-                        activeOpacity={0.8}
-                    >
-                        <Feather name="search" size={22} color="#1e293b" />
+                    <TouchableOpacity style={s.searchBtn} onPress={openSearch} activeOpacity={0.7}>
+                        <Feather name="search" size={20} color="#475569" />
                     </TouchableOpacity>
                 </View>
             </Animated.View>
 
             <Animated.ScrollView
-                style={styles.container}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollInner}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        colors={[B.accent]}
-                        tintColor={B.accent}
-                    />
-                }
-                onScroll={Animated.event(
-                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-                    { useNativeDriver: true }
-                )}
+                contentContainerStyle={s.scroll}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[B.accent]} tintColor={B.accent} />}
+                onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
                 scrollEventThrottle={16}
             >
-
-                {/* Hero Banner */}
+                {/* ── Hero ── */}
                 <LinearGradient
-                    colors={[B.accent + '20', B.accent + '08']}
+                    colors={[B.accent, B.accent + 'cc']}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
-                    style={styles.heroBanner}
+                    style={s.hero}
                 >
-                    <View style={styles.heroContent}>
-                        <View style={styles.heroBadge}>
-                            <Text style={styles.heroBadgeText}>🔥 Featured</Text>
+                    <View style={s.heroInner}>
+                        <View style={s.heroTag}>
+                            <MaterialIcons name="local-fire-department" size={13} color="#fff" />
+                            <Text style={s.heroTagText}>Trusted Professionals</Text>
                         </View>
-                        <Text style={styles.heroTitle}>Find the Best{'\n'}Professional Services</Text>
-                        <Text style={styles.heroSubtitle}>
-                            Browse through our curated list of{'\n'}trusted professionals
+                        <Text style={s.heroHeading}>
+                            Find the Best{'\n'}Services Near You
                         </Text>
-                        <View style={styles.heroStats}>
-                            <View style={styles.heroStat}>
-                                <Text style={styles.heroStatNumber}>{allServices.length}+</Text>
-                                <Text style={styles.heroStatLabel}>Services</Text>
+                        <Text style={s.heroSub}>
+                            Verified experts, transparent pricing,{'\n'}seamless booking.
+                        </Text>
+                        <View style={s.heroStats}>
+                            <View style={s.heroStat}>
+                                <Text style={s.heroStatNum}>{allServices.length}+</Text>
+                                <Text style={s.heroStatLab}>Services</Text>
                             </View>
-                            <View style={styles.heroStatDivider} />
-                            <View style={styles.heroStat}>
-                                <Text style={styles.heroStatNumber}>{categories.length}</Text>
-                                <Text style={styles.heroStatLabel}>Categories</Text>
+                            <View style={s.heroStatSep} />
+                            <View style={s.heroStat}>
+                                <Text style={s.heroStatNum}>{categories.length}</Text>
+                                <Text style={s.heroStatLab}>Categories</Text>
                             </View>
                         </View>
                     </View>
-                    <View style={styles.heroIconContainer}>
-                        <MaterialIcons name="handyman" size={80} color={B.accent + '15'} />
-                    </View>
+                    {/* Decorative circles */}
+                    <View style={s.heroCircle1} />
+                    <View style={s.heroCircle2} />
                 </LinearGradient>
 
-                {/* Popular Services Section */}
-                {renderPopularServicesSection()}
+                {/* ── Popular ── */}
+                {popularServices.length > 0 && (
+                    <View style={s.section}>
+                        <View style={s.secHead}>
+                            <View style={s.secHeadLeft}>
+                                <View style={s.secIcon}>
+                                    <MaterialIcons name="auto-awesome" size={16} color="#f59e0b" />
+                                </View>
+                                <Text style={s.secTitle}>Popular Services</Text>
+                            </View>
+                        </View>
+                        <View style={s.popList}>
+                            {popularServices.slice(0, 4).map((item) => (
+                                <View key={item.id} style={s.popItemWrap}>
+                                    {renderPopularItem({ item })}
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                )}
 
-                {/* All Categories */}
+                {/* ── Categories ── */}
                 {categories.length === 0 ? (
-                    <View style={styles.emptyContainer}>
-                        <MaterialIcons name="grid-off" size={48} color="#94a3b8" />
-                        <Text style={styles.emptyText}>No service listings found</Text>
+                    <View style={s.empty}>
+                        <View style={s.emptyIconWrap}>
+                            <MaterialIcons name="category" size={40} color="#94a3b8" />
+                        </View>
+                        <Text style={s.emptyTitle}>No services available</Text>
+                        <Text style={s.emptySub}>Pull down to refresh</Text>
                     </View>
                 ) : (
-                    categories.map((category, index) => {
-                        if (!category.services || category.services.length === 0) return null;
-                        const color = getCategoryColor(index);
-
+                    categories.map((cat, idx) => {
+                        if (!cat.services?.length) return null;
+                        const color = categoryColor(idx);
                         return (
-                            <View key={category.categoryId} style={styles.section}>
-                                <View style={styles.sectionHeader}>
-                                    <View style={styles.categoryHeaderLeft}>
-                                        <View style={[styles.categoryDot, { backgroundColor: color }]} />
-                                        <Text style={styles.categoryTitle}>
-                                            {category.categoryName}
-                                        </Text>
+                            <View key={cat.categoryId} style={s.section}>
+                                <View style={s.secHead}>
+                                    <View style={s.secHeadLeft}>
+                                        <View style={[s.secDot, { backgroundColor: color }]} />
+                                        <Text style={s.catTitle}>{cat.categoryName}</Text>
                                     </View>
-                                    <Text style={styles.count}>
-                                        {category.services.length} {category.services.length === 1 ? 'service' : 'services'}
-                                    </Text>
+                                    <Text style={s.count}>{cat.services.length} services</Text>
                                 </View>
-
                                 <FlatList
                                     horizontal
-                                    data={category.services}
-                                    renderItem={({ item, index: idx }) => renderService({ item, index: idx })}
-                                    keyExtractor={(item) => item.id.toString()}
+                                    data={cat.services}
+                                    renderItem={({ item, index: i }) => renderServiceCard({ item, index: i })}
+                                    keyExtractor={(s) => s.id.toString()}
                                     showsHorizontalScrollIndicator={false}
-                                    contentContainerStyle={styles.horizontalScrollPadding}
+                                    contentContainerStyle={s.hScrollPad}
+                                    decelerationRate="fast"
                                     snapToInterval={234}
                                     snapToAlignment="start"
-                                    decelerationRate="fast"
                                 />
                             </View>
                         );
                     })
                 )}
 
-                {/* Bottom Spacer */}
-                <View style={styles.bottomSpacer} />
+                <View style={{ height: 100 }} />
             </Animated.ScrollView>
 
-            {/* Search Modal */}
-            <Modal
-                visible={showSearchModal}
-                animationType="slide"
-                transparent={true}
-                onRequestClose={closeSearch}
-            >
-                <View style={styles.searchModalContainer}>
-                    <View style={styles.searchModalContent}>
-                        <View style={styles.searchModalHeader}>
-                            <TouchableOpacity
-                                onPress={closeSearch}
-                                style={styles.searchModalBack}
-                            >
-                                <Ionicons name="arrow-back" size={24} color="#1e293b" />
+            {/* ── Search Modal ── */}
+            <Modal visible={showSearchModal} animationType="fade" transparent onRequestClose={closeSearch}>
+                <Animated.View style={[s.modalBg, { opacity: searchFadeAnim }]}>
+                    <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSearch} />
+                    <Animated.View style={[s.modalSheet, { opacity: searchFadeAnim, transform: [{ translateY: searchFadeAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }] }]}>
+                        <View style={s.modalHandle} />
+                        <View style={s.modalInputRow}>
+                            <TouchableOpacity onPress={closeSearch} hitSlop={8}>
+                                <Ionicons name="arrow-back" size={22} color="#334155" />
                             </TouchableOpacity>
-                            <View style={styles.searchModalInputWrapper}>
-                                <Feather name="search" size={20} color="#94a3b8" />
+                            <View style={s.modalInputWrap}>
+                                <Feather name="search" size={18} color="#94a3b8" />
                                 <TextInput
                                     ref={searchInputRef}
-                                    style={styles.searchModalInput}
-                                    placeholder="Search for services..."
+                                    style={s.modalInput}
+                                    placeholder="Search services, categories..."
                                     placeholderTextColor="#94a3b8"
                                     value={searchQuery}
                                     onChangeText={setSearchQuery}
-                                    autoFocus={true}
+                                    autoFocus
                                 />
                                 {searchQuery.length > 0 && (
-                                    <TouchableOpacity onPress={() => setSearchQuery('')}>
-                                        <Ionicons name="close-circle" size={20} color="#94a3b8" />
+                                    <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
+                                        <Ionicons name="close-circle" size={18} color="#cbd5e1" />
                                     </TouchableOpacity>
                                 )}
                             </View>
                         </View>
 
                         {searchQuery.length > 0 && (
-                            <View style={styles.searchResultsContainer}>
+                            <View style={s.modalResults}>
                                 {searchResults.length > 0 ? (
                                     <FlatList
                                         data={searchResults}
-                                        renderItem={renderSearchResult}
-                                        keyExtractor={(item) => item.id.toString()}
+                                        renderItem={renderSearchItem}
+                                        keyExtractor={(s) => s.id.toString()}
                                         showsVerticalScrollIndicator={false}
-                                        contentContainerStyle={styles.searchResultsList}
-                                        ItemSeparatorComponent={() => (
-                                            <View style={styles.searchResultSeparator} />
-                                        )}
+                                        ItemSeparatorComponent={() => <View style={s.srSep} />}
+                                        contentContainerStyle={{ paddingBottom: 40 }}
                                     />
                                 ) : (
-                                    <View style={styles.noSearchResults}>
-                                        <MaterialIcons name="search-off" size={48} color="#94a3b8" />
-                                        <Text style={styles.noSearchResultsText}>No services found</Text>
-                                        <Text style={styles.noSearchResultsSubtext}>
-                                            Try adjusting your search terms
-                                        </Text>
+                                    <View style={s.noResults}>
+                                        <MaterialIcons name="search-off" size={52} color="#cbd5e1" />
+                                        <Text style={s.noResTitle}>No results found</Text>
+                                        <Text style={s.noResSub}>Try different keywords</Text>
                                     </View>
                                 )}
                             </View>
                         )}
-                    </View>
-                </View>
+
+                        {searchQuery.length === 0 && (
+                            <View style={s.suggestions}>
+                                <Text style={s.sugTitle}>Quick suggestions</Text>
+                                <View style={s.sugChips}>
+                                    {['Cleaning', 'Plumbing', 'Electrician', 'Painting', 'AC Repair', 'Moving'].map((t) => (
+                                        <TouchableOpacity
+                                            key={t}
+                                            style={s.sugChip}
+                                            onPress={() => setSearchQuery(t)}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Text style={s.sugChipText}>{t}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            </View>
+                        )}
+                    </Animated.View>
+                </Animated.View>
             </Modal>
         </SafeAreaContainer>
     );
 }
 
-const styles = StyleSheet.create({
-    safeContainer: {
+/* ═══════════════════════════════════════════
+   STYLES
+   ═══════════════════════════════════════════ */
+const s = StyleSheet.create({
+    root: {
         flex: 1,
         backgroundColor: '#f8fafc',
     },
-    container: {
-        flex: 1,
-    },
-    scrollInner: {
-        paddingBottom: 110,
-    },
-    loader: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
+
+    /* Header */
+    headerWrap: {
         backgroundColor: '#f8fafc',
+        zIndex: 10,
     },
     header: {
-        backgroundColor: '#ffffff',
-        paddingTop: 8,
-        paddingBottom: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
-    },
-    headerContent: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 20,
+        paddingTop: 8,
+        paddingBottom: 14,
     },
-    headerSubtitle: {
-        fontSize: 12,
-        color: '#94a3b8',
-        fontWeight: '500',
-        letterSpacing: 0.5,
-        textTransform: 'uppercase',
-    },
-    headerTitle: {
-        fontSize: 26,
-        fontWeight: '700',
-        color: '#0f172a',
-        letterSpacing: -0.5,
-    },
-    searchIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: '#f1f5f9',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    quickSearchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginHorizontal: 20,
-        marginTop: 16,
-        marginBottom: 20,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#e8edf2',
-        shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.03,
-        shadowRadius: 4,
-        elevation: 1,
-        gap: 12,
-    },
-    quickSearchText: {
-        flex: 1,
-        fontSize: 14,
-        color: '#94a3b8',
-        fontWeight: '400',
-    },
-    quickSearchShortcut: {
-        backgroundColor: '#f1f5f9',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-    },
-    quickSearchShortcutText: {
-        fontSize: 10,
-        color: '#94a3b8',
-        fontWeight: '600',
-    },
-    heroBanner: {
-        marginHorizontal: 20,
-        marginBottom: 24,
-        borderRadius: 20,
-        padding: 20,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: B.accent + '10',
-    },
-    heroContent: {
-        flex: 1,
-    },
-    heroBadge: {
-        backgroundColor: B.accent + '20',
-        paddingHorizontal: 12,
-        paddingVertical: 4,
-        borderRadius: 20,
-        alignSelf: 'flex-start',
-        marginBottom: 8,
-    },
-    heroBadgeText: {
+    headerLabel: {
         fontSize: 11,
         fontWeight: '600',
-        color: B.accent,
+        color: '#94a3b8',
+        textTransform: 'uppercase',
+        letterSpacing: 1.2,
     },
-    heroTitle: {
-        fontSize: 22,
-        fontWeight: '700',
+    headerTitle: {
+        fontSize: 28,
+        fontWeight: '800',
         color: '#0f172a',
-        marginBottom: 6,
-        lineHeight: 28,
+        letterSpacing: -0.8,
+        marginTop: 2,
     },
-    heroSubtitle: {
+    searchBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 14,
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 3,
+        elevation: 2,
+    },
+
+    /* Scroll */
+    scroll: {
+        paddingBottom: 40,
+    },
+
+    /* Hero */
+    hero: {
+        marginHorizontal: 20,
+        marginBottom: 28,
+        borderRadius: 24,
+        padding: 24,
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    heroInner: { flex: 1, zIndex: 2 },
+    heroTag: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#ffffff25',
+        alignSelf: 'flex-start',
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 20,
+        gap: 5,
+        marginBottom: 14,
+        borderWidth: 1,
+        borderColor: '#ffffff30',
+    },
+    heroTagText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#fff',
+        letterSpacing: 0.3,
+    },
+    heroHeading: {
+        fontSize: 24,
+        fontWeight: '800',
+        color: '#fff',
+        lineHeight: 30,
+        letterSpacing: -0.5,
+        marginBottom: 8,
+    },
+    heroSub: {
         fontSize: 13,
-        color: '#64748b',
+        color: '#ffffffcc',
         lineHeight: 18,
-        marginBottom: 12,
+        marginBottom: 18,
     },
     heroStats: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 16,
+        gap: 20,
     },
-    heroStat: {
-        alignItems: 'center',
+    heroStat: {},
+    heroStatNum: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#fff',
     },
-    heroStatNumber: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#0f172a',
-    },
-    heroStatLabel: {
+    heroStatLab: {
         fontSize: 11,
-        color: '#94a3b8',
+        color: '#ffffffaa',
         fontWeight: '500',
+        marginTop: -2,
     },
-    heroStatDivider: {
+    heroStatSep: {
         width: 1,
-        height: 30,
-        backgroundColor: '#e8edf2',
+        height: 32,
+        backgroundColor: '#ffffff30',
     },
-    heroIconContainer: {
+    heroCircle1: {
         position: 'absolute',
-        right: -10,
-        bottom: -10,
-        opacity: 0.4,
+        width: 180,
+        height: 180,
+        borderRadius: 90,
+        backgroundColor: '#ffffff10',
+        right: -40,
+        top: -40,
     },
-    popularSection: {
-        marginBottom: 28,
-        paddingHorizontal: 20,
+    heroCircle2: {
+        position: 'absolute',
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#ffffff08',
+        left: -20,
+        bottom: -20,
     },
-    popularList: {
-        marginTop: 4,
-        gap: 8,
-    },
-    popularCard: {
-        borderRadius: 16,
-        overflow: 'hidden',
-        marginBottom: 8,
-    },
-    popularCardGradient: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 12,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: B.accent + '10',
-    },
-    popularCardLeft: {
-        marginRight: 12,
-    },
-    popularImage: {
-        width: 56,
-        height: 56,
-        borderRadius: 12,
-        backgroundColor: '#f1f5f9',
-    },
-    popularImagePlaceholder: {
-        width: 56,
-        height: 56,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    popularCardBody: {
-        flex: 1,
-    },
-    popularHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    popularName: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#0f172a',
-        flex: 1,
-    },
-    popularMiniBadge: {
-        backgroundColor: '#fef3c7',
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 10,
-    },
-    popularDescription: {
-        fontSize: 12,
-        color: '#94a3b8',
-        marginTop: 2,
-    },
-    popularPriceRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        marginTop: 2,
-    },
-    popularPriceLabel: {
-        fontSize: 11,
-        color: '#94a3b8',
-    },
-    popularPrice: {
-        fontSize: 14,
-        fontWeight: '700',
-    },
-    popularArrow: {
-        paddingLeft: 8,
-    },
+
+    /* Section common */
     section: {
-        marginBottom: 28,
+        marginBottom: 30,
     },
-    sectionHeader: {
+    secHead: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
         paddingHorizontal: 20,
+        marginBottom: 14,
     },
-    sectionTitleContainer: {
+    secHeadLeft: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: 10,
     },
-    sectionIcon: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
+    secIcon: {
+        width: 30,
+        height: 30,
+        borderRadius: 10,
+        backgroundColor: '#fef3c7',
         justifyContent: 'center',
         alignItems: 'center',
     },
-    sectionTitle: {
+    secDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+    },
+    secTitle: {
         fontSize: 18,
         fontWeight: '700',
         color: '#0f172a',
-        letterSpacing: -0.2,
+        letterSpacing: -0.3,
     },
-    seeAllText: {
-        fontSize: 13,
-        fontWeight: '600',
-    },
-    categoryHeaderLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    categoryDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-    },
-    categoryTitle: {
+    catTitle: {
         fontSize: 17,
-        fontWeight: '600',
+        fontWeight: '700',
         color: '#0f172a',
         letterSpacing: -0.2,
     },
@@ -840,282 +745,370 @@ const styles = StyleSheet.create({
         color: '#94a3b8',
         fontWeight: '500',
     },
-    horizontalScrollPadding: {
-        paddingLeft: 20,
-        paddingRight: 4,
+    seeAll: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: B.accent,
     },
+
+    /* Popular list */
+    popList: {
+        paddingHorizontal: 20,
+        gap: 4,
+    },
+    popItemWrap: {
+        backgroundColor: '#fff',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#f1f5f9',
+        marginBottom: 8,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.02,
+        shadowRadius: 4,
+        elevation: 1,
+    },
+    popRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
+        gap: 14,
+    },
+    popRowImgWrap: {},
+    popRowImg: {
+        width: 52,
+        height: 52,
+        borderRadius: 14,
+        backgroundColor: '#f1f5f9',
+    },
+    popRowImgPH: {
+        width: 52,
+        height: 52,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    popRowBody: {
+        flex: 1,
+    },
+    popRowName: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#0f172a',
+    },
+    popRowCat: {
+        fontSize: 12,
+        color: '#94a3b8',
+        marginTop: 2,
+    },
+    popRowPrice: {
+        fontSize: 15,
+        fontWeight: '700',
+        marginTop: 3,
+    },
+    popRowArrow: {
+        paddingLeft: 4,
+    },
+
+    /* Horizontal scroll padding */
+    hScrollPad: {
+        paddingLeft: 20,
+        paddingRight: 20,
+        gap: 14,
+    },
+
+    /* Service Card */
     card: {
-        width: 240,
-        backgroundColor: '#ffffff',
+        width: 220,
+        backgroundColor: '#fff',
         borderRadius: 20,
-        marginRight: 14,
         overflow: 'hidden',
         borderWidth: 1,
         borderColor: '#f1f5f9',
         shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.04,
-        shadowRadius: 8,
-        elevation: 2,
-        marginBottom: 4,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.05,
+        shadowRadius: 12,
+        elevation: 3,
     },
-    cardImageWrapper: {
+    cardImgWrap: {
         position: 'relative',
         height: 140,
     },
-    cardImage: {
+    cardImg: {
         width: '100%',
         height: 140,
         backgroundColor: '#f1f5f9',
         resizeMode: 'cover',
     },
-    cardImagePlaceholder: {
+    cardImgPlaceholder: {
         width: '100%',
         height: 140,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    popularBadge: {
+    popChip: {
         position: 'absolute',
         top: 10,
         right: 10,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: B.accent,
-        paddingHorizontal: 10,
+        paddingHorizontal: 9,
         paddingVertical: 4,
-        borderRadius: 12,
+        borderRadius: 10,
         gap: 4,
         shadowColor: B.accent,
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
+        shadowOpacity: 0.35,
         shadowRadius: 4,
-        elevation: 3,
+        elevation: 4,
     },
-    popularBadgeText: {
+    popChipText: {
         fontSize: 10,
-        fontWeight: '600',
-        color: '#ffffff',
+        fontWeight: '700',
+        color: '#fff',
     },
-    categoryTag: {
+    catChip: {
         position: 'absolute',
         bottom: 10,
         left: 10,
         paddingHorizontal: 10,
         paddingVertical: 4,
-        borderRadius: 12,
+        borderRadius: 10,
     },
-    categoryTagText: {
+    catChipText: {
         fontSize: 10,
         fontWeight: '600',
+        color: '#fff',
     },
     cardBody: {
         padding: 14,
     },
-    serviceName: {
+    cardName: {
         fontSize: 15,
         fontWeight: '700',
         color: '#0f172a',
         marginBottom: 4,
+        letterSpacing: -0.2,
     },
-    description: {
+    cardDesc: {
         fontSize: 12,
         color: '#94a3b8',
         lineHeight: 16,
         height: 32,
-        marginBottom: 8,
+        marginBottom: 10,
     },
-    footer: {
+    cardFooter: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        marginTop: 4,
+        alignItems: 'flex-end',
     },
-    priceLabel: {
+    cardPriceLabel: {
         fontSize: 10,
         color: '#94a3b8',
         fontWeight: '500',
     },
-    price: {
-        fontSize: 16,
+    cardPrice: {
+        fontSize: 17,
         fontWeight: '800',
-        letterSpacing: -0.3,
+        letterSpacing: -0.4,
     },
-    bookButton: {
+    bookBtn: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
+        paddingHorizontal: 16,
+        paddingVertical: 9,
         borderRadius: 20,
         shadowColor: B.accent,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 2,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+        elevation: 4,
     },
-    bookButtonText: {
+    bookBtnText: {
         fontSize: 12,
-        fontWeight: '600',
-        color: '#ffffff',
+        fontWeight: '700',
+        color: '#fff',
     },
-    emptyContainer: {
+
+    /* Empty */
+    empty: {
         alignItems: 'center',
-        justifyContent: 'center',
         paddingVertical: 60,
         gap: 8,
     },
-    emptyText: {
-        fontSize: 14,
+    emptyIconWrap: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#f1f5f9',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    emptyTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#475569',
+    },
+    emptySub: {
+        fontSize: 13,
         color: '#94a3b8',
-        fontWeight: '500',
     },
-    bottomSpacer: {
-        height: 20,
-    },
-    // Search Modal Styles
-    searchModalContainer: {
+
+    /* Search Modal */
+    modalBg: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.4)',
+        backgroundColor: 'rgba(15, 23, 42, 0.5)',
     },
-    searchModalContent: {
-        flex: 1,
-        backgroundColor: '#ffffff',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        marginTop: 40,
+    modalSheet: {
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        minHeight: 420,
+        maxHeight: '85%',
         overflow: 'hidden',
     },
-    searchModalHeader: {
+    modalHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#e2e8f0',
+        alignSelf: 'center',
+        marginTop: 10,
+        marginBottom: 6,
+    },
+    modalInputRow: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
         paddingVertical: 12,
+        gap: 12,
         borderBottomWidth: 1,
         borderBottomColor: '#f1f5f9',
-        gap: 12,
     },
-    searchModalBack: {
-        padding: 4,
-    },
-    searchModalInputWrapper: {
+    modalInputWrap: {
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#f1f5f9',
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
+        backgroundColor: '#f8fafc',
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
         gap: 10,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
     },
-    searchModalInput: {
+    modalInput: {
         flex: 1,
-        fontSize: 16,
+        fontSize: 15,
         color: '#0f172a',
-        paddingVertical: 4,
+        paddingVertical: 2,
     },
-    searchResultsContainer: {
+    modalResults: {
         flex: 1,
         paddingHorizontal: 16,
         paddingTop: 8,
     },
-    searchResultsList: {
-        paddingBottom: 16,
-    },
-    searchResultItem: {
+    srItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 12,
-        gap: 12,
+        paddingVertical: 14,
+        gap: 14,
     },
-    searchResultImage: {
+    srImg: {
         width: 48,
         height: 48,
-        borderRadius: 12,
+        borderRadius: 14,
         backgroundColor: '#f1f5f9',
     },
-    searchResultImagePlaceholder: {
+    srImgPH: {
         width: 48,
         height: 48,
-        borderRadius: 12,
+        borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    searchResultBody: {
-        flex: 1,
-    },
-    searchResultName: {
+    srBody: { flex: 1 },
+    srName: {
         fontSize: 15,
         fontWeight: '600',
         color: '#0f172a',
     },
-    searchResultCategory: {
+    srCat: {
         fontSize: 12,
         color: '#94a3b8',
         marginTop: 1,
     },
-    searchResultPrice: {
+    srPrice: {
         fontSize: 14,
         fontWeight: '700',
-        marginTop: 2,
+        marginTop: 3,
     },
-    searchResultBadge: {
+    srBadge: {
         backgroundColor: '#fef3c7',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
         borderRadius: 10,
     },
-    searchResultBadgeText: {
+    srBadgeText: {
         fontSize: 10,
-        fontWeight: '600',
+        fontWeight: '700',
         color: '#d97706',
     },
-    searchResultSeparator: {
+    srSep: {
         height: 1,
         backgroundColor: '#f1f5f9',
+        marginLeft: 62,
     },
-    noSearchResults: {
+    noResults: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 60,
         gap: 8,
+        paddingTop: 60,
     },
-    noSearchResultsText: {
+    noResTitle: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#0f172a',
+        color: '#334155',
+        marginTop: 8,
     },
-    noSearchResultsSubtext: {
-        fontSize: 14,
+    noResSub: {
+        fontSize: 13,
         color: '#94a3b8',
     },
-    searchSuggestions: {
-        flex: 1,
+
+    /* Suggestions */
+    suggestions: {
         paddingHorizontal: 20,
-        paddingTop: 20,
+        paddingTop: 24,
     },
-    searchSuggestionsTitle: {
-        fontSize: 16,
+    sugTitle: {
+        fontSize: 13,
         fontWeight: '600',
-        color: '#0f172a',
-        marginBottom: 12,
+        color: '#64748b',
+        marginBottom: 14,
+        textTransform: 'uppercase',
+        letterSpacing: 0.8,
     },
-    searchSuggestionsChips: {
+    sugChips: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 8,
+        gap: 10,
     },
-    searchChip: {
-        backgroundColor: '#f1f5f9',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
+    sugChip: {
+        backgroundColor: '#f8fafc',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#e8edf2',
+        borderColor: '#e2e8f0',
     },
-    searchChipText: {
-        fontSize: 13,
+    sugChipText: {
+        fontSize: 14,
         color: '#334155',
         fontWeight: '500',
     },
