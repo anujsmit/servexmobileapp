@@ -67,8 +67,8 @@ export default function VerifyOtpScreen() {
         setPendingOnboarding(false);
         router.replace(
             user.role === 'mistri'
-                ? { pathname: '/onboarding/mistri' }
-                : { pathname: '/onboarding/customer' }
+                ? { pathname: '(Protected)/onboarding/mistri' }
+                : { pathname: '(Protected)/onboarding/customer' }
         );
     }, [pendingOnboarding, user?.role]);
 

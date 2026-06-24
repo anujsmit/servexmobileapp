@@ -38,15 +38,43 @@ interface ServiceItem {
     name: string;
     description: string | null;
     price: number | string;
+    durationMinutes: number | null;
     imageUrl: string | null;
     isPopular?: boolean;
+    displayOrder?: number;
+    subCategoryId?: string;
     categoryName?: string;
+    categoryId?: number;
+}
+
+interface SubCategory {
+    id: string;
+    name: string;
+    description: string | null;
+    imageUrl: string | null;
+    isPopular: boolean;
+    items: ServiceItem[];
+    itemCount: number;
 }
 
 interface CategoryGroup {
-    categoryId: number;
-    categoryName: string;
-    services: ServiceItem[];
+    id: number;
+    name: string;
+    description: string | null;
+    iconUrl: string | null;
+    iconColor: string | null;
+    displayOrder: number;
+    subCategories: SubCategory[];
+    totalItems: number;
+    popularItems: ServiceItem[];
+}
+
+interface HierarchyResponse {
+    success: boolean;
+    hierarchy: CategoryGroup[];
+    popularServices: ServiceItem[];
+    totalCategories: number;
+    totalItems: number;
 }
 
 /* ─── Helpers ─── */
@@ -80,13 +108,11 @@ function SkeletonBlock({ w, h, r = 12, mb = 0 }: { w: number | string; h: number
 function SkeletonScreen() {
     return (
         <View style={{ flex: 1, backgroundColor: '#f8fafc', paddingTop: 60 }}>
-            {/* Header skeleton */}
             <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
                 <SkeletonBlock w={100} h={12} r={6} mb={6} />
                 <SkeletonBlock w={140} h={28} r={6} />
             </View>
 
-            {/* Hero skeleton */}
             <View
                 style={{
                     marginHorizontal: 20,
@@ -97,7 +123,6 @@ function SkeletonScreen() {
                 }}
             />
 
-            {/* Popular skeleton */}
             <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
                 <SkeletonBlock w={160} h={22} r={6} mb={14} />
                 {[1, 2, 3].map((i) => (
@@ -125,7 +150,6 @@ function SkeletonScreen() {
                 ))}
             </View>
 
-            {/* Category section skeleton */}
             <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
                 <SkeletonBlock w={180} h={22} r={6} mb={14} />
             </View>
@@ -156,10 +180,73 @@ export default function ServicesScreen() {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const searchFadeAnim = useRef(new Animated.Value(0)).current;
 
-    /* ─── Fetch ─── */
+
+    // app/(protected)/(customer)/services/index.tsx
+
     const fetchServices = async () => {
         try {
-            const res = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services`);
+            // Try the new hierarchy endpoint
+            // Option A: If you used Fix 2 (recommended)
+            const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/public/service-hierarchy`;
+
+            // Option B: If you used Fix 1
+            // const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services/service-hierarchy`;
+
+            console.log('[Services] Fetching from:', url);
+
+            const res = await fetch(url);
+            console.log('[Services] Response status:', res.status);
+
+            if (!res.ok) {
+                console.error('[Services] HTTP error:', res.status);
+                // Fallback to platform services
+                return fetchPlatformServices();
+            }
+
+            const data = await res.json();
+            console.log('[Services] Data received:', data.success ? 'Success' : 'Failed');
+
+            if (data.success) {
+                setCategories(data.hierarchy || []);
+
+                // Flatten all items for search
+                const flat: ServiceItem[] = [];
+                (data.hierarchy || []).forEach((cat: any) => {
+                    (cat.subCategories || []).forEach((sub: any) => {
+                        (sub.items || []).forEach((item: any) => {
+                            flat.push({
+                                ...item,
+                                categoryName: cat.name,
+                                categoryId: cat.id,
+                            });
+                        });
+                    });
+                });
+
+                setAllServices(flat);
+                setPopularServices(data.popularServices || flat.filter((s) => s.isPopular).slice(0, 6));
+            } else {
+                // If API returns success: false, fallback to platform services
+                console.log('[Services] Hierarchy API returned false, falling back to platform services');
+                return fetchPlatformServices();
+            }
+        } catch (error) {
+            console.error('[Services] Error fetching hierarchy:', error);
+            // Fallback to platform services
+            return fetchPlatformServices();
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    // Fallback function to use platform services
+    const fetchPlatformServices = async () => {
+        try {
+            const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services`;
+            console.log('[Services] Fallback fetching from:', url);
+
+            const res = await fetch(url);
             const data = await res.json();
 
             if (res.ok) {
@@ -187,13 +274,11 @@ export default function ServicesScreen() {
                 setAllServices([]);
                 setPopularServices([]);
             }
-        } catch {
+        } catch (error) {
+            console.error('[Services] Fallback error:', error);
             setCategories([]);
             setAllServices([]);
             setPopularServices([]);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
         }
     };
 
@@ -245,6 +330,7 @@ export default function ServicesScreen() {
                 description: item.description || '',
                 imageUrl: item.imageUrl || '',
                 categoryName: item.categoryName || 'Service',
+                durationMinutes: String(item.durationMinutes || 0),
             },
         });
     };
@@ -267,7 +353,6 @@ export default function ServicesScreen() {
                 style={s.card}
                 onPress={() => goService(item)}
             >
-                {/* Image */}
                 <View style={s.cardImgWrap}>
                     {item.imageUrl ? (
                         <Image source={{ uri: item.imageUrl }} style={s.cardImg} />
@@ -291,7 +376,6 @@ export default function ServicesScreen() {
                     )}
                 </View>
 
-                {/* Body */}
                 <View style={s.cardBody}>
                     <Text style={s.cardName} numberOfLines={1}>{item.name}</Text>
                     <Text style={s.cardDesc} numberOfLines={2}>
@@ -327,7 +411,7 @@ export default function ServicesScreen() {
                 </View>
                 <View style={s.popRowBody}>
                     <Text style={s.popRowName} numberOfLines={1}>{item.name}</Text>
-                    <Text style={s.popRowCat} numberOfLines={1}>{item.categoryName}</Text>
+                    <Text style={s.popRowCat} numberOfLines={1}>{item.categoryName || 'Service'}</Text>
                     <Text style={[s.popRowPrice, { color: B.accent }]}>{formatPrice(item.price)}</Text>
                 </View>
                 <View style={s.popRowArrow}>
@@ -417,7 +501,6 @@ export default function ServicesScreen() {
                             </View>
                         </View>
                     </View>
-                    {/* Decorative circles */}
                     <View style={s.heroCircle1} />
                     <View style={s.heroCircle2} />
                 </LinearGradient>
@@ -454,22 +537,35 @@ export default function ServicesScreen() {
                     </View>
                 ) : (
                     categories.map((cat, idx) => {
-                        if (!cat.services?.length) return null;
+                        // Get all items from this category (flatten sub-categories)
+                        const allCategoryItems: ServiceItem[] = [];
+                        cat.subCategories.forEach((sub) => {
+                            sub.items.forEach((item) => {
+                                allCategoryItems.push({
+                                    ...item,
+                                    categoryName: cat.name,
+                                    categoryId: cat.id,
+                                });
+                            });
+                        });
+
+                        if (allCategoryItems.length === 0) return null;
+
                         const color = categoryColor(idx);
                         return (
-                            <View key={cat.categoryId} style={s.section}>
+                            <View key={cat.id} style={s.section}>
                                 <View style={s.secHead}>
                                     <View style={s.secHeadLeft}>
                                         <View style={[s.secDot, { backgroundColor: color }]} />
-                                        <Text style={s.catTitle}>{cat.categoryName}</Text>
+                                        <Text style={s.catTitle}>{cat.name}</Text>
                                     </View>
-                                    <Text style={s.count}>{cat.services.length} services</Text>
+                                    <Text style={s.count}>{allCategoryItems.length} services</Text>
                                 </View>
                                 <FlatList
                                     horizontal
-                                    data={cat.services}
+                                    data={allCategoryItems}
                                     renderItem={({ item, index: i }) => renderServiceCard({ item, index: i })}
-                                    keyExtractor={(s) => s.id.toString()}
+                                    keyExtractor={(item) => item.id.toString()}
                                     showsHorizontalScrollIndicator={false}
                                     contentContainerStyle={s.hScrollPad}
                                     decelerationRate="fast"
@@ -519,7 +615,7 @@ export default function ServicesScreen() {
                                     <FlatList
                                         data={searchResults}
                                         renderItem={renderSearchItem}
-                                        keyExtractor={(s) => s.id.toString()}
+                                        keyExtractor={(item) => item.id.toString()}
                                         showsVerticalScrollIndicator={false}
                                         ItemSeparatorComponent={() => <View style={s.srSep} />}
                                         contentContainerStyle={{ paddingBottom: 40 }}
@@ -538,14 +634,14 @@ export default function ServicesScreen() {
                             <View style={s.suggestions}>
                                 <Text style={s.sugTitle}>Quick suggestions</Text>
                                 <View style={s.sugChips}>
-                                    {['Cleaning', 'Plumbing', 'Electrician', 'Painting', 'AC Repair', 'Moving'].map((t) => (
+                                    {categories.slice(0, 6).map((cat) => (
                                         <TouchableOpacity
-                                            key={t}
+                                            key={cat.id}
                                             style={s.sugChip}
-                                            onPress={() => setSearchQuery(t)}
+                                            onPress={() => setSearchQuery(cat.name)}
                                             activeOpacity={0.7}
                                         >
-                                            <Text style={s.sugChipText}>{t}</Text>
+                                            <Text style={s.sugChipText}>{cat.name}</Text>
                                         </TouchableOpacity>
                                     ))}
                                 </View>

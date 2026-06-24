@@ -41,31 +41,51 @@ import { useServices } from '../../../context/ServicesContext';
 const { width: screenWidth } = Dimensions.get('window');
 
 // ============================================
-// TYPES
+// TYPES - Updated for Service Hierarchy
 // ============================================
+
+interface ServiceItem {
+    id: string;
+    name: string;
+    description: string | null;
+    price: number | string;
+    durationMinutes: number | null;
+    imageUrl: string | null;
+    isPopular?: boolean;
+    displayOrder?: number;
+    subCategoryId?: string;
+    categoryName?: string;
+    categoryId?: number;
+}
+
+interface SubCategory {
+    id: string;
+    name: string;
+    description: string | null;
+    imageUrl: string | null;
+    isPopular: boolean;
+    items: ServiceItem[];
+    itemCount: number;
+}
 
 interface ServiceCategory {
     id: number;
     name: string;
-    serviceName?: string;
-    description?: string;
-    iconUrl?: string | null;
-    customIconUrl?: string | null;
-    iconColor?: string;
-    mapIconColor?: string;
-    isActive?: boolean;
-    subCategoryCount?: number;
+    description: string | null;
+    iconUrl: string | null;
+    iconColor: string | null;
+    displayOrder: number;
+    subCategories: SubCategory[];
+    totalItems: number;
+    popularItems: ServiceItem[];
 }
 
-interface PlatformService {
-    id: string;
-    name: string;
-    description: string | null;
-    price: string;
-    imageUrl: string | null;
-    serviceId?: number;
-    categoryName?: string;
-    isPopular?: boolean;
+interface HierarchyResponse {
+    success: boolean;
+    hierarchy: ServiceCategory[];
+    popularServices: ServiceItem[];
+    totalCategories: number;
+    totalItems: number;
 }
 
 interface Banner {
@@ -169,9 +189,10 @@ export default function CustomerDashboard() {
 
     const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useCustomerRequestsQuery();
 
-    // State
+    // State - Updated for hierarchy
     const [categories, setCategories] = useState<ServiceCategory[]>([]);
-    const [popularServices, setPopularServices] = useState<PlatformService[]>([]);
+    const [popularServices, setPopularServices] = useState<ServiceItem[]>([]);
+    const [allServiceItems, setAllServiceItems] = useState<ServiceItem[]>([]);
     const [ad1Banners, setAd1Banners] = useState<Banner[]>([]);
     const [ad2Banners, setAd2Banners] = useState<Banner[]>([]);
     const [categoriesLoading, setCategoriesLoading] = useState(true);
@@ -218,15 +239,14 @@ export default function CustomerDashboard() {
     // ============================================
 
     useEffect(() => {
-        fetchCategories();
-        fetchPopularServices();
+        fetchHierarchyData();
         fetchBanners();
     }, []);
 
     useEffect(() => {
         if (searchQuery.trim()) {
             const filtered = categories.filter(category =>
-                (category.name || category.serviceName || '')
+                (category.name || '')
                     .toLowerCase()
                     .includes(searchQuery.toLowerCase())
             );
@@ -237,14 +257,78 @@ export default function CustomerDashboard() {
     }, [searchQuery, categories]);
 
     // ============================================
-    // API FUNCTIONS
+    // API FUNCTIONS - UPDATED FOR HIERARCHY
     // ============================================
 
-    const fetchCategories = async () => {
+    const fetchHierarchyData = async () => {
         try {
             setCategoriesLoading(true);
+            setPopularServicesLoading(true);
             setError(null);
 
+            const url = `${API_BASE}/api/public/service-hierarchy`;
+            console.log('[Dashboard] Fetching hierarchy from:', url);
+            
+            const response = await fetch(url, {
+                headers: {
+                    'ngrok-skip-browser-warning': 'true',
+                },
+            });
+            
+            console.log('[Dashboard] Response status:', response.status);
+            
+            const data: HierarchyResponse = await response.json();
+
+            if (response.ok && data.success) {
+                console.log('[Dashboard] Categories found:', data.hierarchy?.length || 0);
+                console.log('[Dashboard] Total items:', data.totalItems || 0);
+                
+                // Set categories
+                setCategories(data.hierarchy || []);
+                setDisplayCategories(data.hierarchy || []);
+                
+                // Flatten all items for search and display
+                const flat: ServiceItem[] = [];
+                (data.hierarchy || []).forEach((cat) => {
+                    (cat.subCategories || []).forEach((sub) => {
+                        (sub.items || []).forEach((item) => {
+                            flat.push({
+                                ...item,
+                                categoryName: cat.name,
+                                categoryId: cat.id,
+                            });
+                        });
+                    });
+                });
+                setAllServiceItems(flat);
+                
+                // Set popular services
+                if (data.popularServices && data.popularServices.length > 0) {
+                    setPopularServices(data.popularServices.slice(0, 10));
+                } else {
+                    // Fallback: get popular items from flat list
+                    setPopularServices(flat.filter((s) => s.isPopular).slice(0, 10));
+                }
+            } else {
+                console.error('[Dashboard] Hierarchy API error:', data);
+                // Fallback to legacy categories
+                await fetchLegacyCategories();
+            }
+        } catch (error) {
+            console.error('[Dashboard] Error fetching hierarchy:', error);
+            setError('Failed to load services. Please check your connection.');
+            // Fallback to legacy categories
+            await fetchLegacyCategories();
+        } finally {
+            setCategoriesLoading(false);
+            setPopularServicesLoading(false);
+        }
+    };
+
+    // Legacy fallback
+    const fetchLegacyCategories = async () => {
+        try {
+            console.log('[Dashboard] Falling back to legacy categories');
             const url = `${API_BASE}/api/public/categories`;
             const response = await fetch(url, {
                 headers: {
@@ -255,89 +339,25 @@ export default function CustomerDashboard() {
 
             if (response.ok && data.success) {
                 let categoriesData = data.categories || [];
-
+                // Convert legacy format to display format
                 const mappedCategories = categoriesData.map((cat: any) => ({
                     id: cat.id,
                     name: cat.name,
-                    serviceName: cat.name,
                     description: cat.description || null,
                     iconUrl: cat.iconUrl || null,
-                    customIconUrl: cat.iconUrl || null,
                     iconColor: cat.iconColor || '#e67e22',
-                    mapIconColor: cat.iconColor || '#e67e22',
-                    isActive: cat.isActive !== false,
-                    subCategoryCount: cat.subCategoryCount || 0,
+                    displayOrder: cat.displayOrder || 0,
+                    subCategories: [],
+                    totalItems: cat.subCategoryCount || 0,
+                    popularItems: [],
                 }));
-
                 setCategories(mappedCategories);
                 setDisplayCategories(mappedCategories);
-            } else {
-                setError('Failed to load categories');
-                setCategories([]);
-                setDisplayCategories([]);
             }
         } catch (error) {
-            console.error('Error fetching categories:', error);
-            setError('Network error. Please check your connection.');
+            console.error('[Dashboard] Legacy fetch error:', error);
             setCategories([]);
             setDisplayCategories([]);
-        } finally {
-            setCategoriesLoading(false);
-        }
-    };
-
-    const fetchPopularServices = async () => {
-        try {
-            setPopularServicesLoading(true);
-            const response = await fetch(`${API_BASE}/api/platform-services/popular`);
-            const data = await response.json();
-
-            if (response.ok && data.success && data.services) {
-                const popularServicesList = data.services.map((service: any) => ({
-                    id: service.id,
-                    name: service.name,
-                    description: service.description,
-                    price: service.price,
-                    imageUrl: service.imageUrl,
-                    serviceId: service.categoryId,
-                    categoryName: service.categoryName || service.category || 'Service',
-                    isPopular: true,
-                }));
-                setPopularServices(popularServicesList.slice(0, 10));
-            } else {
-                const fallbackResponse = await fetch(`${API_BASE}/api/platform-services`);
-                const fallbackData = await fallbackResponse.json();
-
-                if (fallbackResponse.ok && fallbackData.categories) {
-                    const allServices: PlatformService[] = [];
-                    fallbackData.categories.forEach((category: any) => {
-                        if (category.services && Array.isArray(category.services)) {
-                            category.services.forEach((service: any) => {
-                                if (service.isPopular === true) {
-                                    allServices.push({
-                                        id: service.id,
-                                        name: service.name,
-                                        description: service.description,
-                                        price: service.price,
-                                        imageUrl: service.imageUrl,
-                                        serviceId: category.categoryId,
-                                        categoryName: category.categoryName || 'Service',
-                                        isPopular: true,
-                                    });
-                                }
-                            });
-                        }
-                    });
-                    setPopularServices(allServices.slice(0, 10));
-                } else {
-                    setPopularServices([]);
-                }
-            }
-        } catch (error) {
-            console.log('Failed to fetch popular services:', error);
-            setPopularServices([]);
-        } finally {
-            setPopularServicesLoading(false);
         }
     };
 
@@ -372,8 +392,7 @@ export default function CustomerDashboard() {
     const refreshAllData = async () => {
         setRefreshing(true);
         await Promise.all([
-            fetchCategories(),
-            fetchPopularServices(),
+            fetchHierarchyData(),
             fetchBanners(),
             refetchRequests(),
         ]);
@@ -393,13 +412,12 @@ export default function CustomerDashboard() {
 
     const getCategoryColor = (category: ServiceCategory, index: number) => {
         if (category.iconColor) return category.iconColor;
-        if (category.mapIconColor) return category.mapIconColor;
         const colors = ['#FF6B6B', '#4A90E2', '#4CAF50', '#FF9800', '#9C27B0', '#E91E63', '#00BCD4'];
         return colors[index % colors.length];
     };
 
     const getCategoryName = (category: ServiceCategory) => {
-        return category.name || category.serviceName || 'Unnamed';
+        return category.name || 'Unnamed';
     };
 
     const getStatusColor = (status: string) => {
@@ -440,18 +458,19 @@ export default function CustomerDashboard() {
         });
     };
 
-    const openPopularService = (service: PlatformService) => {
-        const categoryNameValue = service.categoryName || service.serviceName || 'Service';
+    const openPopularService = (service: ServiceItem) => {
+        const categoryNameValue = service.categoryName || 'Service';
 
         router.push({
             pathname: '/service-details/[id]',
             params: {
                 id: service.id,
                 name: service.name,
-                price: service.price,
+                price: String(service.price),
                 description: service.description || '',
                 imageUrl: service.imageUrl || '',
                 categoryName: categoryNameValue,
+                durationMinutes: String(service.durationMinutes || 0),
             },
         });
     };
@@ -768,7 +787,7 @@ export default function CustomerDashboard() {
                     <View style={styles.errorState}>
                         <MaterialIcons name="error-outline" size={40} color="#ef4444" />
                         <Text style={styles.errorTitle}>{error}</Text>
-                        <TouchableOpacity style={styles.retryButton} onPress={fetchCategories}>
+                        <TouchableOpacity style={styles.retryButton} onPress={refreshAllData}>
                             <Text style={styles.retryButtonText}>Retry</Text>
                         </TouchableOpacity>
                     </View>
@@ -788,7 +807,7 @@ export default function CustomerDashboard() {
                         {categoriesToShow.slice(0, 12).map((category, index) => {
                             const iconColor = getCategoryColor(category, index);
                             const categoryName = getCategoryName(category);
-                            const hasCustomIcon = category.customIconUrl && category.customIconUrl.length > 0;
+                            const hasCustomIcon = category.iconUrl && category.iconUrl.length > 0;
                             const isImageFailed = failedImages[category.id];
 
                             const firstLetter = categoryName.charAt(0).toUpperCase();
@@ -803,7 +822,7 @@ export default function CustomerDashboard() {
                                     <View style={[styles.categoryIconContainer, { backgroundColor: '#ffffff' }]}>
                                         {hasCustomIcon && !isImageFailed ? (
                                             <Image
-                                                source={{ uri: category.customIconUrl! }}
+                                                source={{ uri: category.iconUrl! }}
                                                 style={styles.categoryCustomIcon}
                                                 resizeMode="cover"  
                                                 onError={() => {
@@ -830,88 +849,95 @@ export default function CustomerDashboard() {
         );
     };
 
-    const renderPopularServices = () => (
-        <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleContainer}>
-                    <Text style={styles.sectionTitle}>Popular Services</Text>
-                </View>
-                <TouchableOpacity onPress={() => router.push('/services')}>
-                    <Text style={[styles.seeAllText, { color: B.accent }]}>See All</Text>
-                </TouchableOpacity>
-            </View>
+    const renderPopularServices = () => {
+        // Get popular items from the flattened list
+        const popularItems = popularServices.length > 0 
+            ? popularServices 
+            : allServiceItems.filter(s => s.isPopular).slice(0, 10);
 
-            {popularServicesLoading && !refreshing ? (
-                <View style={styles.popularListContainer}>
-                    {[1, 2, 3, 4].map((item) => (
-                        <PopularServiceSkeleton key={item} />
-                    ))}
+        return (
+            <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitleContainer}>
+                        <Text style={styles.sectionTitle}>Popular Services</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => router.push('/services')}>
+                        <Text style={[styles.seeAllText, { color: B.accent }]}>See All</Text>
+                    </TouchableOpacity>
                 </View>
-            ) : popularServices.length === 0 ? (
-                <View style={styles.emptyPopularContainer}>
-                    <MaterialIcons name="info-outline" size={28} color="#cbd5e1" />
-                    <Text style={styles.emptySubtitle}>No popular services available</Text>
-                </View>
-            ) : (
-                <View style={styles.popularListContainer}>
-                    {popularServices.map((service) => (
-                        <TouchableOpacity
-                            key={service.id}
-                            style={styles.popularServiceCardRow}
-                            activeOpacity={0.7}
-                            onPress={() => openPopularService(service)}
-                        >
-                            <View style={styles.popularImageWrapper}>
-                                {service.imageUrl ? (
-                                    <Image
-                                        source={{ uri: service.imageUrl }}
-                                        style={styles.popularServiceImageRow}
-                                        resizeMode="cover"
-                                    />
-                                ) : (
-                                    <View style={[styles.popularServiceIconPlaceholderRow, { backgroundColor: B.accent + '08' }]}>
-                                        <MaterialIcons name="build" size={28} color={B.accent} />
-                                    </View>
-                                )}
-                            </View>
 
-                            <View style={styles.popularInfoContainerRow}>
-                                <View style={styles.serviceNameRow}>
-                                    <Text style={styles.popularServiceNameRow} numberOfLines={1}>
-                                        {service.name}
-                                    </Text>
-                                    {service.isPopular && (
-                                        <View style={styles.popularBadge}>
-                                            <MaterialIcons name="star" size={10} color="#faad14" />
-                                            <Text style={styles.popularBadgeText}>Popular</Text>
+                {popularServicesLoading && !refreshing ? (
+                    <View style={styles.popularListContainer}>
+                        {[1, 2, 3, 4].map((item) => (
+                            <PopularServiceSkeleton key={item} />
+                        ))}
+                    </View>
+                ) : popularItems.length === 0 ? (
+                    <View style={styles.emptyPopularContainer}>
+                        <MaterialIcons name="info-outline" size={28} color="#cbd5e1" />
+                        <Text style={styles.emptySubtitle}>No popular services available</Text>
+                    </View>
+                ) : (
+                    <View style={styles.popularListContainer}>
+                        {popularItems.slice(0, 6).map((service) => (
+                            <TouchableOpacity
+                                key={service.id}
+                                style={styles.popularServiceCardRow}
+                                activeOpacity={0.7}
+                                onPress={() => openPopularService(service)}
+                            >
+                                <View style={styles.popularImageWrapper}>
+                                    {service.imageUrl ? (
+                                        <Image
+                                            source={{ uri: service.imageUrl }}
+                                            style={styles.popularServiceImageRow}
+                                            resizeMode="cover"
+                                        />
+                                    ) : (
+                                        <View style={[styles.popularServiceIconPlaceholderRow, { backgroundColor: B.accent + '08' }]}>
+                                            <MaterialIcons name="build" size={28} color={B.accent} />
                                         </View>
                                     )}
                                 </View>
-                                <Text style={styles.popularServiceDescriptionRow} numberOfLines={2}>
-                                    {service.description || 'Professional service at your doorstep'}
-                                </Text>
-                                <View style={styles.priceRow}>
-                                    <Text style={styles.popularServicePriceLabelRow}>Starting from</Text>
-                                    <Text style={styles.popularServicePriceRow}>
-                                        रु {parseFloat(service.price).toLocaleString()}
-                                    </Text>
-                                </View>
-                            </View>
 
-                            <LinearGradient
-                                colors={[B.accent, B.accent + 'CC']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 1 }}
-                                style={styles.popularBookButtonRow}
-                            >
-                                <Text style={styles.popularBookTextRow}>Book</Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-            )}
-        </View>
-    );
+                                <View style={styles.popularInfoContainerRow}>
+                                    <View style={styles.serviceNameRow}>
+                                        <Text style={styles.popularServiceNameRow} numberOfLines={1}>
+                                            {service.name}
+                                        </Text>
+                                        {service.isPopular && (
+                                            <View style={styles.popularBadge}>
+                                                <MaterialIcons name="star" size={10} color="#faad14" />
+                                                <Text style={styles.popularBadgeText}>Popular</Text>
+                                            </View>
+                                        )}
+                                    </View>
+                                    <Text style={styles.popularServiceDescriptionRow} numberOfLines={2}>
+                                        {service.description || 'Professional service at your doorstep'}
+                                    </Text>
+                                    <View style={styles.priceRow}>
+                                        <Text style={styles.popularServicePriceLabelRow}>Starting from</Text>
+                                        <Text style={styles.popularServicePriceRow}>
+                                            रु {typeof service.price === 'string' ? parseFloat(service.price).toLocaleString() : service.price.toLocaleString()}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                <LinearGradient
+                                    colors={[B.accent, B.accent + 'CC']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={styles.popularBookButtonRow}
+                                >
+                                    <Text style={styles.popularBookTextRow}>Book</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                )}
+            </View>
+        );
+    };
 
     // ============================================
     // MAIN RENDER
@@ -1285,7 +1311,7 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#f1f5f9',
     },
-        categoryCustomIcon: {
+    categoryCustomIcon: {
         width: '100%',
         height: '100%',
         borderRadius: 20, 
@@ -1540,14 +1566,14 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         marginTop: 12,
         paddingVertical: 10,
-        backgroundColor: '#fff7ed', // B.accent + '10' equivalent
+        backgroundColor: '#fff7ed',
         borderRadius: 10,
         gap: 6,
     },
     recentOrderTrackText: {
         fontSize: 13,
         fontWeight: '700',
-        color: '#ea580c', // B.accent equivalent
+        color: '#ea580c',
     },
     modalContainer: {
         flex: 1,

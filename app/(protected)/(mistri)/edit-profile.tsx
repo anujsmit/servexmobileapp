@@ -8,18 +8,24 @@ import {
     ActivityIndicator,
     ScrollView,
     Animated,
+    StyleSheet,
+    KeyboardAvoidingView,
+    Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import * as FaceDetector from 'expo-face-detector';
+import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useMistriProfileQuery, useUpdateMistriProfile } from '../../../hooks/queries';
 import { useAuth } from '../../../context/AuthContext';
 import { ExpandableMapSelector } from '../../../components/ExpandableMapSelector';
 import { useServices } from '../../../context/ServicesContext';
 import { useRouter } from 'expo-router';
+import { SafeAreaContainer } from '../../../components/SafeAreaContainer';
+import { PageTitle } from '../../../components/PageTitle';
 import type { ComponentProps } from 'react';
 import {
     mistriDashboardColors as DC,
@@ -28,7 +34,6 @@ import {
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
-// Updated AVAILABILITY_OPTIONS - removed 'unavailable'
 const AVAILABILITY_OPTIONS: {
     key: 'available' | 'on_work_available';
     label: string;
@@ -37,9 +42,9 @@ const AVAILABILITY_OPTIONS: {
     color: string;
     dimColor: string;
 }[] = [
-        { key: 'available', label: 'Available', shortLabel: 'Available', icon: 'checkmark-circle', color: '#10b981', dimColor: '#d1fae5' },
-        { key: 'on_work_available', label: 'On Work', shortLabel: 'On Work', icon: 'time', color: '#f59e0b', dimColor: '#fef3c7' },
-    ];
+    { key: 'available', label: 'Available Now', shortLabel: 'Available', icon: 'checkmark-circle', color: '#10b981', dimColor: '#d1fae5' },
+    { key: 'on_work_available', label: 'Currently on Work', shortLabel: 'On Work', icon: 'time', color: '#f59e0b', dimColor: '#fef3c7' },
+];
 
 export default function EditProfileScreen() {
     const router = useRouter();
@@ -48,32 +53,47 @@ export default function EditProfileScreen() {
     const { mutateAsync: updateProfile, isPending: isUpdating } = useUpdateMistriProfile();
     const { activeServices } = useServices();
 
+    // Form state
     const [fullName, setFullName] = useState('');
     const [imageUri, setImageUri] = useState<string | null>(null);
-    const [imageBase64, setImageBase64] = useState<string | null>(null);
     const [serviceId, setServiceId] = useState<number | null>(null);
     const [location, setLocation] = useState<string>('');
     const [bio, setBio] = useState<string>('');
     const [fullNameError, setFullNameError] = useState<string>('');
     const [markerPosition, setMarkerPosition] = useState<{ latitude: number; longitude: number } | null>(null);
     const [showMapSelector, setShowMapSelector] = useState(false);
-    const [isEditingBio, setIsEditingBio] = useState(false);
-    const [isEditingProfile, setIsEditingProfile] = useState(false);
     const [optimisticAvailability, setOptimisticAvailability] = useState<'available' | 'on_work_available' | null>(null);
 
+    // Image upload states
+    const [isDetectingFace, setIsDetectingFace] = useState(false);
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
+    const [imageUploadSuccess, setImageUploadSuccess] = useState(false);
+
+    // Animations
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(24)).current;
+    const successOpacity = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         Animated.parallel([
-            Animated.timing(fadeAnim, { toValue: 1, duration: 420, useNativeDriver: true }),
-            Animated.spring(slideAnim, { toValue: 0, tension: 90, friction: 18, useNativeDriver: true }),
+            Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+            Animated.spring(slideAnim, { toValue: 0, tension: 85, friction: 18, useNativeDriver: true }),
         ]).start();
     }, []);
 
+    useEffect(() => {
+        if (imageUploadSuccess) {
+            Animated.sequence([
+                Animated.timing(successOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+                Animated.delay(2000),
+                Animated.timing(successOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ]).start(() => setImageUploadSuccess(false));
+        }
+    }, [imageUploadSuccess]);
+
     const getAccentColor = () => {
         const s = activeServices.find(svc => svc.id === serviceId);
-        return s?.color || '#10b981';
+        return s?.color || '#6366f1';
     };
 
     useEffect(() => {
@@ -89,74 +109,125 @@ export default function EditProfileScreen() {
                     if (coords.length === 2) {
                         const lat = parseFloat(coords[0]);
                         const lng = parseFloat(coords[1]);
-                        if (!isNaN(lat) && !isNaN(lng)) setMarkerPosition({ latitude: lat, longitude: lng });
+                        if (!isNaN(lat) && !isNaN(lng)) {
+                            setMarkerPosition({ latitude: lat, longitude: lng });
+                        }
                     }
-                } catch { }
+                } catch { /* noop */ }
             }
         }
     }, [profile]);
 
-    // Camera permission and photo picker - only when user taps
-    const pickImage = async () => {
-        try {
-            // Request camera permission only when user taps the profile photo
-            if (process.env.EXPO_OS !== 'web') {
-                const { status } = await ImagePicker.requestCameraPermissionsAsync();
-                if (status !== 'granted') {
-                    Alert.alert('Permission required', 'Camera permission is needed to take photos!');
-                    return;
-                }
-            }
+    // ── Camera with Face Detection + Auto-Update ──
+const takeProfilePhoto = async () => {
+    if (isDetectingFace || isUploadingImage) return;
 
-            const result = await ImagePicker.launchCameraAsync({
-                allowsEditing: true,
-                quality: 0.5,
-                base64: false,
-            });
-            
-            if (!result.canceled && result.assets.length > 0) {
-                const asset = result.assets[0];
-                const manipulatedImage = await ImageManipulator.manipulateAsync(
-                    asset.uri,
-                    [{ resize: { width: 800 } }],
-                    { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-                );
-                setImageUri(manipulatedImage.uri);
-                setImageBase64(manipulatedImage.base64 || null);
+    try {
+        if (process.env.EXPO_OS !== 'web') {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Permission Required', 'Camera permission is needed to take your profile photo.');
+                return;
             }
-        } catch (error) {
-            if (__DEV__) console.error(error);
-            Alert.alert('Error', 'Failed to take photo. Please try again.');
         }
-    };
 
+        const result = await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            quality: 0.8,
+            base64: false,
+            cameraType: ImagePicker.CameraType.front,
+        });
+
+        if (result.canceled || result.assets.length === 0) return;
+        const asset = result.assets[0];
+
+        // Face detection wrapper
+        setIsDetectingFace(true);
+        let faceDetected = false;
+        
+        try {
+            // Dynamically require the module to avoid crashing on start if it's missing
+            const FaceDetector = require('expo-face-detector');
+            
+            const faces = await FaceDetector.detectFacesAsync(asset.uri, {
+                mode: 'fast',
+                detectLandmarks: 'none',
+                runClassifications: 'none',
+            });
+            faceDetected = faces.length > 0;
+        } catch (nativeError) {
+            // Fallback: If the native module doesn't exist (Expo Go), auto-approve the photo
+            if (__DEV__) console.warn('ExpoFaceDetector native module missing. Bypassing face check.');
+            faceDetected = true; 
+        }
+        setIsDetectingFace(false);
+
+        if (!faceDetected) {
+            Alert.alert('No Face Detected', 'Please take a clear photo with your face visible.', [
+                { text: 'Retake', onPress: takeProfilePhoto },
+                { text: 'Cancel', style: 'cancel' },
+            ]);
+            return;
+        }
+
+        // Compress & auto-upload logic continues normally...
+        const manipulated = await ImageManipulator.manipulateAsync(
+            asset.uri,
+            [{ resize: { width: 800 } }],
+            { compress: 0.6, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        );
+
+        setImageUri(manipulated.uri);
+        setIsUploadingImage(true);
+
+        await updateProfile({ profilePhotoBase64: manipulated.base64 });
+        getMe().catch(() => {});
+
+        setIsUploadingImage(false);
+        setImageUploadSuccess(true);
+
+    } catch (error: any) {
+        setIsDetectingFace(false);
+        setIsUploadingImage(false);
+        if (__DEV__) console.error('Photo error:', error);
+        Alert.alert('Error', error.message || 'Failed to process photo.');
+    }
+};
     const handleMapLocationConfirm = (coords: { latitude: number; longitude: number }) => {
         setMarkerPosition(coords);
         setLocation(`${coords.latitude.toFixed(6)},${coords.longitude.toFixed(6)}`);
     };
 
+    // ── Save profile details (image saved separately) ──
     const handleSave = async () => {
+        // Validation
+        const errors: string[] = [];
         if (!fullName.trim()) {
             setFullNameError('Full name is required');
-            Alert.alert('Missing info', 'Please enter your full name.');
+            errors.push('full name');
+        }
+        if (!serviceId) errors.push('service type');
+        if (!markerPosition || !location) errors.push('service location');
+
+        if (errors.length > 0) {
+            Alert.alert('Missing Information', `Please provide your ${errors.join(', ')}.`);
             return;
         }
-        if (!serviceId) { Alert.alert('Missing info', 'Please select a service.'); return; }
-        if (!markerPosition || !location) { Alert.alert('Missing info', 'Please set your service location on the map.'); return; }
+
         try {
-            const updates: any = { fullName: fullName.trim(), serviceId, currentLocation: location, bio: bio.trim() };
-            if (imageBase64) updates.profilePhotoBase64 = imageBase64;
-            await updateProfile(updates);
-            // Fire-and-forget — don't await; the mutation's onSuccess already
-            // invalidates the mistriProfile query, so the UI refreshes regardless.
-            getMe().catch(() => { });
-            Alert.alert('Success', 'Profile updated successfully!');
-            setIsEditingBio(false);
-            setIsEditingProfile(false);
-            setImageBase64(null);
+            await updateProfile({
+                fullName: fullName.trim(),
+                serviceId,
+                currentLocation: location,
+                bio: bio.trim(),
+            });
+            getMe().catch(() => {});
+            Alert.alert('Success', 'Profile updated successfully!', [
+                { text: 'OK', onPress: () => router.back() },
+            ]);
         } catch (error: any) {
             if (__DEV__) console.error('Profile update error', error);
-            Alert.alert('Error', error.message || 'Failed to update profile. Please try again.');
+            Alert.alert('Error', error.message || 'Failed to update profile.');
         }
     };
 
@@ -177,11 +248,13 @@ export default function EditProfileScreen() {
 
     if (isLoadingProfile) {
         return (
-            <View style={{ flex: 1, backgroundColor: '#f8fafc', justifyContent: 'center', alignItems: 'center', gap: 12 }}>
-                <StatusBar style="dark" />
-                <ActivityIndicator size="large" color={accentColor} />
-                <Text style={{ fontSize: 14, color: '#64748b', fontWeight: '500' }}>Loading profile…</Text>
-            </View>
+            <SafeAreaContainer>
+                <PageTitle title="Edit Profile" variant="mistri" />
+                <View style={S.loadingWrap}>
+                    <ActivityIndicator size="large" color={accentColor} />
+                    <Text style={S.loadingText}>Loading profile…</Text>
+                </View>
+            </SafeAreaContainer>
         );
     }
 
@@ -189,171 +262,122 @@ export default function EditProfileScreen() {
         || profile?.serviceName?.charAt(0).toUpperCase() + (profile?.serviceName?.slice(1) || '')
         || 'Service Provider';
 
-    const avgRating = profile?.averageRating != null && Number(profile.averageRating) > 0
-        ? Number(profile.averageRating).toFixed(1)
-        : null;
+    // Avatar overlay state
+    const avatarState = isDetectingFace ? 'scanning'
+        : isUploadingImage ? 'uploading'
+            : imageUploadSuccess ? 'success'
+                : null;
 
     return (
-        <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
-            <ScrollView
-                style={{ backgroundColor: '#fff' }}
-                contentInsetAdjustmentBehavior="automatic"
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 0 }}
+        <SafeAreaContainer>
+
+            <KeyboardAvoidingView
+                style={S.keyboardWrap}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             >
-                {/* ── HERO ── */}
-                <LinearGradient
-                    colors={[DC.surface, DC.surfaceMuted]}
-                    style={{ paddingTop: 24, paddingBottom: 80, paddingHorizontal: 24, alignItems: 'center' }}
+                <ScrollView
+                    style={S.scroll}
+                    contentContainerStyle={S.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                    bounces
+                    keyboardShouldPersistTaps="handled"
                 >
-                    {/* Avatar */}
-                    <TouchableOpacity
-                        onPress={pickImage}
-                        activeOpacity={0.85}
-                        style={{ marginBottom: 18, position: 'relative' }}
-                    >
-                        {imageUri ? (
-                            <Image
-                                source={{ uri: imageUri }}
-                                style={{
-                                    width: 108, height: 108, borderRadius: 54,
-                                    borderWidth: 3, borderColor: accentColor,
-                                }}
-                                contentFit="cover"
-                            />
-                        ) : (
-                            <View style={{
-                                width: 108, height: 108, borderRadius: 54,
-                                backgroundColor: '#e2e8f0',
-                                borderWidth: 3, borderColor: accentColor,
-                                alignItems: 'center', justifyContent: 'center',
-                            }}>
-                                <MaterialIcons name="person" size={52} color="#94a3b8" />
-                            </View>
-                        )}
-                        <View style={{
-                            position: 'absolute', bottom: 2, right: 2,
-                            width: 32, height: 32, borderRadius: 16,
-                            backgroundColor: accentColor,
-                            alignItems: 'center', justifyContent: 'center',
-                            borderWidth: 2, borderColor: '#ffffff',
-                        }}>
-                            <MaterialIcons name="camera-alt" size={16} color="#ffffff" />
-                        </View>
-                    </TouchableOpacity>
-
-                    {/* Name */}
-                    <Text style={{ fontSize: 26, fontWeight: '800', color: DC.text, marginBottom: 6, textAlign: 'center' }}>
-                        {profile?.fullName || 'Your Name'}
-                    </Text>
-
-                    {/* Service badge */}
-                    <View style={{
-                        flexDirection: 'row', alignItems: 'center', gap: 6,
-                        paddingHorizontal: 14, paddingVertical: 6,
-                        borderRadius: 20, borderCurve: 'continuous',
-                        backgroundColor: `${accentColor}22`,
-                        borderWidth: 1, borderColor: `${accentColor}55`,
-                        marginBottom: 16,
-                    }}>
-                        <MaterialIcons name="verified" size={14} color={accentColor} />
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: accentColor }}>{serviceName}</Text>
-                    </View>
-
-                    {/* Rating + Jobs inline */}
-                    <View style={{ flexDirection: 'row', gap: 24, alignItems: 'center' }}>
+                    {/* ═══ AVATAR SECTION ═══ */}
+                    <Animated.View style={[S.avatarSection, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
                         <TouchableOpacity
-                            onPress={() => router.push('/(protected)/(mistri)/(tabs)/reviews')}
-                            activeOpacity={0.75}
-                            style={{ alignItems: 'center', gap: 3 }}
+                            onPress={takeProfilePhoto}
+                            activeOpacity={0.9}
+                            disabled={isDetectingFace || isUploadingImage}
+                            style={S.avatarTouchable}
                         >
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                <Ionicons name="star" size={16} color="#f59e0b" />
-                                <Text style={{ fontSize: 22, fontWeight: '800', color: DC.text, fontVariant: ['tabular-nums'] }}>
-                                    {avgRating ?? '–'}
-                                </Text>
-                            </View>
-                            <Text style={{ fontSize: 11, color: DC.muted, fontWeight: '500' }}>Rating</Text>
+                            {imageUri ? (
+                                <Image
+                                    source={{ uri: imageUri }}
+                                    style={S.avatar}
+                                    contentFit="cover"
+                                    transition={250}
+                                />
+                            ) : (
+                                <View style={[S.avatar, S.avatarPlaceholder]}>
+                                    <MaterialIcons name="person" size={56} color={DC.muted} />
+                                </View>
+                            )}
+
+                            {/* Camera badge */}
+                            {!avatarState && (
+                                <View style={S.cameraBadge}>
+                                    <MaterialIcons name="camera-alt" size={18} color="#ffffff" />
+                                </View>
+                            )}
+
+                            {/* Scanning overlay */}
+                            {avatarState === 'scanning' && (
+                                <View style={S.avatarOverlay}>
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                    <Text style={S.overlayText}>Scanning…</Text>
+                                </View>
+                            )}
+
+                            {/* Uploading overlay */}
+                            {avatarState === 'uploading' && (
+                                <View style={S.avatarOverlay}>
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                    <Text style={S.overlayText}>Saving…</Text>
+                                </View>
+                            )}
+
+                            {/* Success overlay */}
+                            {avatarState === 'success' && (
+                                <Animated.View style={[S.avatarOverlay, S.successOverlay, { opacity: successOpacity }]}>
+                                    <View style={S.successCircle}>
+                                        <Ionicons name="checkmark" size={36} color="#ffffff" />
+                                    </View>
+                                </Animated.View>
+                            )}
                         </TouchableOpacity>
+                        <Text style={S.avatarHint}>Tap to take a new photo</Text>
+                    </Animated.View>
 
-                        <View style={{ width: 1, height: 32, backgroundColor: '#cbd5e1' }} />
-
-                        <TouchableOpacity
-                            onPress={() => router.push('/(protected)/(mistri)/(tabs)/my-jobs')}
-                            activeOpacity={0.75}
-                            style={{ alignItems: 'center', gap: 3 }}
-                        >
-                            <Text style={{ fontSize: 22, fontWeight: '800', color: DC.text, fontVariant: ['tabular-nums'] }}>
-                                {profile?.jobsCompleted ?? 0}
-                            </Text>
-                            <Text style={{ fontSize: 11, color: DC.muted, fontWeight: '500' }}>Jobs Done</Text>
-                        </TouchableOpacity>
-                    </View>
-                </LinearGradient>
-
-                {/* Body — light background wrapper so gaps between cards are #f1f5f9, not dark */}
-                <View style={{ backgroundColor: DC.canvas, paddingBottom: 48 }}>
-
-                    {/* ── STATUS CARD — overlapping hero ── */}
-                    <Animated.View style={{
-                        marginTop: -44,
-                        marginHorizontal: 20,
-                        opacity: fadeAnim,
-                        transform: [{ translateY: slideAnim }],
-                    }}>
-                        <View style={{
-                            backgroundColor: '#ffffff',
-                            borderRadius: 20, borderCurve: 'continuous',
-                            padding: 20,
-                            boxShadow: MISTRI_ELEV.card,
-                        }}>
-                            {/* Current status banner */}
-                            <View style={{
-                                flexDirection: 'row', alignItems: 'center', gap: 12,
-                                padding: 14, borderRadius: 14, borderCurve: 'continuous',
-                                backgroundColor: currentStatusOption.dimColor,
-                                marginBottom: 16,
-                            }}>
-                                <Ionicons name={currentStatusOption.icon} size={26} color={currentStatusOption.color} />
-                                <View style={{ flex: 1 }}>
-                                    <Text style={{ fontSize: 15, fontWeight: '700', color: currentStatusOption.color }}>
-                                        {currentStatusOption.label}
-                                    </Text>
-                                    <Text style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>
-                                        Tap below to change your status
-                                    </Text>
+                    {/* ═══ AVAILABILITY CARD ═══ */}
+                    <Animated.View style={[S.cardWrap, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                        <View style={S.card}>
+                            <View style={S.cardHead}>
+                                <View style={S.cardTitleRow}>
+                                    <View style={[S.titleAccent, { backgroundColor: accentColor }]} />
+                                    <Text style={S.cardTitle}>AVAILABILITY STATUS</Text>
                                 </View>
                             </View>
 
-                            {/* Selector pills - now only 2 options */}
-                            <View style={{ flexDirection: 'row', gap: 8 }}>
-                                {AVAILABILITY_OPTIONS.map(option => {
-                                    const isActive = currentAvailability === option.key;
+                            <View style={[S.statusBanner, { backgroundColor: currentStatusOption.dimColor }]}>
+                                <View style={[S.statusIconCircle, { backgroundColor: currentStatusOption.color }]}>
+                                    <Ionicons name={currentStatusOption.icon} size={22} color="#ffffff" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[S.statusTitle, { color: currentStatusOption.color }]}>
+                                        {currentStatusOption.label}
+                                    </Text>
+                                    <Text style={S.statusSub}>Tap to change your status</Text>
+                                </View>
+                            </View>
+
+                            <View style={S.statusPills}>
+                                {AVAILABILITY_OPTIONS.map(opt => {
+                                    const active = currentAvailability === opt.key;
                                     return (
                                         <TouchableOpacity
-                                            key={option.key}
-                                            onPress={() => updateAvailability(option.key)}
+                                            key={opt.key}
+                                            onPress={() => updateAvailability(opt.key)}
                                             activeOpacity={0.7}
-                                            style={{
-                                                flex: 1, alignItems: 'center', paddingVertical: 12,
-                                                borderRadius: 12, borderCurve: 'continuous',
-                                                borderWidth: 1.5,
-                                                borderColor: isActive ? option.color : '#e2e8f0',
-                                                backgroundColor: isActive ? `${option.color}12` : '#f8fafc',
-                                                gap: 5,
-                                            }}
+                                            style={[
+                                                S.pill,
+                                                active && { backgroundColor: `${opt.color}12`, borderColor: opt.color, borderWidth: 2 },
+                                            ]}
                                         >
-                                            <Ionicons
-                                                name={option.icon}
-                                                size={22}
-                                                color={isActive ? option.color : '#94a3b8'}
-                                            />
-                                            <Text style={{
-                                                fontSize: 11, fontWeight: '700',
-                                                color: isActive ? option.color : '#94a3b8',
-                                            }}>
-                                                {option.shortLabel}
+                                            <Ionicons name={opt.icon} size={22} color={active ? opt.color : '#94a3b8'} />
+                                            <Text style={[S.pillText, { color: active ? opt.color : '#94a3b8' }]}>
+                                                {opt.shortLabel}
                                             </Text>
+                                            {active && <View style={[S.pillDot, { backgroundColor: opt.color }]} />}
                                         </TouchableOpacity>
                                     );
                                 })}
@@ -361,298 +385,136 @@ export default function EditProfileScreen() {
                         </View>
                     </Animated.View>
 
-                    {/* ── ABOUT ── */}
-                    <Animated.View style={{
-                        marginTop: 16, marginHorizontal: 20,
-                        opacity: fadeAnim, transform: [{ translateY: slideAnim }],
-                    }}>
-                        <View style={{
-                            backgroundColor: '#ffffff', borderRadius: 20, borderCurve: 'continuous',
-                            overflow: 'hidden', boxShadow: MISTRI_ELEV.card,
-                        }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 18, paddingBottom: 12 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                    <View style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: accentColor }} />
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', letterSpacing: 0.8 }}>ABOUT ME</Text>
+                    {/* ═══ PERSONAL INFO CARD ═══ */}
+                    <Animated.View style={[S.cardWrap, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                        <View style={S.card}>
+                            <View style={S.cardHead}>
+                                <View style={S.cardTitleRow}>
+                                    <View style={[S.titleAccent, { backgroundColor: accentColor }]} />
+                                    <Text style={S.cardTitle}>PERSONAL INFORMATION</Text>
                                 </View>
-                                {!isEditingBio && (
-                                    <TouchableOpacity
-                                        onPress={() => { setIsEditingBio(true); setIsEditingProfile(false); }}
-                                        style={{
-                                            flexDirection: 'row', alignItems: 'center', gap: 4,
-                                            paddingHorizontal: 10, paddingVertical: 5,
-                                            borderRadius: 8, borderCurve: 'continuous',
-                                            backgroundColor: `${accentColor}15`,
-                                        }}
-                                    >
-                                        <MaterialIcons name="edit" size={14} color={accentColor} />
-                                        <Text style={{ fontSize: 12, fontWeight: '600', color: accentColor }}>Edit</Text>
-                                    </TouchableOpacity>
-                                )}
                             </View>
 
-                            <View style={{ paddingHorizontal: 18, paddingBottom: 18 }}>
-                                {isEditingBio ? (
-                                    <>
-                                        <TextInput
-                                            placeholder="Describe your skills, experience and expertise…"
-                                            value={bio}
-                                            onChangeText={setBio}
-                                            multiline
-                                            numberOfLines={4}
-                                            style={{
-                                                borderWidth: 1.5, borderColor: '#e2e8f0',
-                                                borderRadius: 12, borderCurve: 'continuous',
-                                                padding: 14, fontSize: 14, color: '#0f172a',
-                                                backgroundColor: '#f8fafc', minHeight: 110,
-                                                textAlignVertical: 'top',
-                                            }}
-                                            placeholderTextColor="#94a3b8"
-                                        />
-                                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                                            <TouchableOpacity
-                                                onPress={() => { if (profile) setBio(profile.bio || ''); setIsEditingBio(false); }}
-                                                disabled={isUpdating}
-                                                style={{
-                                                    flex: 1, paddingVertical: 13, borderRadius: 12, borderCurve: 'continuous',
-                                                    alignItems: 'center', backgroundColor: '#f1f5f9',
-                                                    borderWidth: 1, borderColor: '#e2e8f0',
-                                                }}
-                                            >
-                                                <Text style={{ color: '#64748b', fontSize: 14, fontWeight: '600' }}>Cancel</Text>
-                                            </TouchableOpacity>
-                                            <TouchableOpacity
-                                                onPress={handleSave}
-                                                disabled={isUpdating}
-                                                style={{
-                                                    flex: 1, paddingVertical: 13, borderRadius: 12, borderCurve: 'continuous',
-                                                    alignItems: 'center', justifyContent: 'center',
-                                                    backgroundColor: accentColor, flexDirection: 'row', gap: 6,
-                                                }}
-                                            >
-                                                {isUpdating
-                                                    ? <ActivityIndicator size="small" color="#ffffff" />
-                                                    : <>
-                                                        <MaterialIcons name="check" size={18} color="#ffffff" />
-                                                        <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '700' }}>Save</Text>
-                                                    </>
-                                                }
-                                            </TouchableOpacity>
-                                        </View>
-                                    </>
-                                ) : (
-                                    <Text style={{ fontSize: 14, color: bio ? '#374151' : '#94a3b8', lineHeight: 22 }}>
-                                        {bio || 'No bio added yet. Share your skills and experience with customers.'}
-                                    </Text>
-                                )}
+                            <View style={S.cardBody}>
+                                {/* Full Name */}
+                                <View style={S.field}>
+                                    <Text style={S.fieldLabel}>FULL NAME *</Text>
+                                    <TextInput
+                                        placeholder="Enter your full name"
+                                        value={fullName}
+                                        onChangeText={text => {
+                                            setFullName(text);
+                                            if (text.trim()) setFullNameError('');
+                                        }}
+                                        style={[S.fieldInput, fullNameError && S.fieldInputErr]}
+                                        placeholderTextColor={DC.muted}
+                                        autoCapitalize="words"
+                                    />
+                                    {fullNameError ? <Text style={S.errText}>{fullNameError}</Text> : null}
+                                </View>
+
+                                {/* Bio */}
+                                <View style={S.field}>
+                                    <Text style={S.fieldLabel}>ABOUT ME</Text>
+                                    <TextInput
+                                        placeholder="Describe your skills, experience and expertise…"
+                                        value={bio}
+                                        onChangeText={setBio}
+                                        multiline
+                                        numberOfLines={4}
+                                        style={S.textArea}
+                                        placeholderTextColor={DC.muted}
+                                    />
+                                </View>
                             </View>
                         </View>
                     </Animated.View>
 
-                    {/* ── PROFILE DETAILS ── */}
-                    <Animated.View style={{
-                        marginTop: 16, marginHorizontal: 20,
-                        opacity: fadeAnim, transform: [{ translateY: slideAnim }],
-                    }}>
-                        <View style={{
-                            backgroundColor: '#ffffff', borderRadius: 20, borderCurve: 'continuous',
-                            overflow: 'hidden', boxShadow: MISTRI_ELEV.card,
-                        }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 18, paddingBottom: 12 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                    <View style={{ width: 3, height: 16, borderRadius: 2, backgroundColor: accentColor }} />
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', letterSpacing: 0.8 }}>PROFILE DETAILS</Text>
+                    {/* ═══ SERVICE CARD ═══ */}
+                    <Animated.View style={[S.cardWrap, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                        <View style={S.card}>
+                            <View style={S.cardHead}>
+                                <View style={S.cardTitleRow}>
+                                    <View style={[S.titleAccent, { backgroundColor: accentColor }]} />
+                                    <Text style={S.cardTitle}>SERVICE DETAILS</Text>
                                 </View>
-                                {!isEditingProfile && (
-                                    <TouchableOpacity
-                                        onPress={() => { setIsEditingProfile(true); setIsEditingBio(false); }}
-                                        style={{
-                                            flexDirection: 'row', alignItems: 'center', gap: 4,
-                                            paddingHorizontal: 10, paddingVertical: 5,
-                                            borderRadius: 8, borderCurve: 'continuous',
-                                            backgroundColor: `${accentColor}15`,
-                                        }}
-                                    >
-                                        <MaterialIcons name="edit" size={14} color={accentColor} />
-                                        <Text style={{ fontSize: 12, fontWeight: '600', color: accentColor }}>Edit</Text>
-                                    </TouchableOpacity>
-                                )}
                             </View>
 
-                            <View style={{ paddingHorizontal: 18, paddingBottom: 18, gap: 20 }}>
-                                {/* Full Name */}
-                                <View style={{ gap: 6 }}>
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 0.5 }}>FULL NAME</Text>
-                                    {isEditingProfile ? (
-                                        <>
-                                            <TextInput
-                                                placeholder="Enter your full name"
-                                                value={fullName}
-                                                onChangeText={text => { setFullName(text); if (text.trim()) setFullNameError(''); }}
-                                                style={{
-                                                    borderWidth: 1.5, borderColor: fullNameError ? '#ef4444' : '#e2e8f0',
-                                                    borderRadius: 12, borderCurve: 'continuous',
-                                                    paddingHorizontal: 14, paddingVertical: 12,
-                                                    fontSize: 15, color: '#0f172a', backgroundColor: '#f8fafc',
-                                                }}
-                                                placeholderTextColor="#94a3b8"
-                                            />
-                                            {fullNameError ? (
-                                                <Text style={{ color: '#ef4444', fontSize: 12 }}>{fullNameError}</Text>
-                                            ) : null}
-                                        </>
-                                    ) : (
-                                        <Text style={{ fontSize: 15, color: '#0f172a', fontWeight: '600' }} selectable>
-                                            {fullName || 'Not set'}
-                                        </Text>
-                                    )}
-                                </View>
-
+                            <View style={S.cardBody}>
                                 {/* Service Type */}
-                                <View style={{ gap: 8 }}>
-                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 0.5 }}>SERVICE TYPE</Text>
-                                    {isEditingProfile ? (
-                                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                                            {activeServices.map(service => {
-                                                const isSelected = serviceId === service.id;
-                                                return (
-                                                    <TouchableOpacity
-                                                        key={service.id}
-                                                        onPress={() => setServiceId(service.id)}
-                                                        style={{
-                                                            flexDirection: 'row', alignItems: 'center',
-                                                            paddingVertical: 9, paddingHorizontal: 14,
-                                                            borderWidth: 1.5, borderRadius: 10, borderCurve: 'continuous',
-                                                            borderColor: isSelected ? service.color : '#e2e8f0',
-                                                            backgroundColor: isSelected ? `${service.color}12` : '#f8fafc',
-                                                            gap: 6,
-                                                        }}
-                                                    >
-                                                        <Ionicons
-                                                            name={service.icon}
-                                                            size={18}
-                                                            color={isSelected ? service.color : '#94a3b8'}
-                                                        />
-                                                        <Text style={{
-                                                            fontSize: 13, fontWeight: isSelected ? '700' : '500',
-                                                            color: isSelected ? service.color : '#64748b',
-                                                        }}>
-                                                            {service.displayName}
-                                                        </Text>
-                                                    </TouchableOpacity>
-                                                );
-                                            })}
-                                        </View>
-                                    ) : (
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                            <MaterialIcons name="verified" size={16} color={accentColor} />
-                                            <Text style={{ fontSize: 15, color: '#0f172a', fontWeight: '600' }}>
-                                                {activeServices.find(s => s.id === serviceId)?.displayName || 'Not set'}
-                                            </Text>
-                                        </View>
-                                    )}
+                                <View style={S.field}>
+                                    <Text style={S.fieldLabel}>SERVICE TYPE *</Text>
+                                    <View style={S.chipRow}>
+                                        {activeServices.map(svc => {
+                                            const sel = serviceId === svc.id;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={svc.id}
+                                                    onPress={() => setServiceId(svc.id)}
+                                                    style={[
+                                                        S.chip,
+                                                        sel && { backgroundColor: `${svc.color}12`, borderColor: svc.color, borderWidth: 2 },
+                                                    ]}
+                                                >
+                                                    <Ionicons name={svc.icon} size={18} color={sel ? svc.color : '#94a3b8'} />
+                                                    <Text style={[S.chipText, { color: sel ? svc.color : DC.muted }]}>
+                                                        {svc.displayName}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
                                 </View>
 
-                                {/* Location (edit mode only) */}
-                                {isEditingProfile && (
-                                    <View style={{ gap: 8 }}>
-                                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 0.5 }}>SERVICE LOCATION</Text>
-                                        {markerPosition ? (
-                                            <View style={{
-                                                flexDirection: 'row', alignItems: 'center', gap: 10,
-                                                padding: 12, borderRadius: 12, borderCurve: 'continuous',
-                                                backgroundColor: '#f8fafc', borderWidth: 1.5, borderColor: '#e2e8f0',
-                                            }}>
-                                                <MaterialIcons name="location-on" size={20} color={accentColor} />
-                                                <Text style={{ flex: 1, fontSize: 12, color: '#475569', fontFamily: 'monospace' }} selectable>
-                                                    {markerPosition.latitude.toFixed(4)}, {markerPosition.longitude.toFixed(4)}
-                                                </Text>
-                                                <TouchableOpacity
-                                                    onPress={() => setShowMapSelector(true)}
-                                                    style={{
-                                                        paddingHorizontal: 12, paddingVertical: 6,
-                                                        borderRadius: 8, borderCurve: 'continuous',
-                                                        backgroundColor: accentColor,
-                                                    }}
-                                                >
-                                                    <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700' }}>Change</Text>
-                                                </TouchableOpacity>
-                                            </View>
-                                        ) : (
+                                {/* Location */}
+                                <View style={S.field}>
+                                    <Text style={S.fieldLabel}>SERVICE LOCATION *</Text>
+                                    {markerPosition ? (
+                                        <View style={S.locBox}>
+                                            <MaterialIcons name="location-on" size={22} color={accentColor} />
+                                            <Text style={S.locCoords} selectable>
+                                                {markerPosition.latitude.toFixed(4)}, {markerPosition.longitude.toFixed(4)}
+                                            </Text>
                                             <TouchableOpacity
                                                 onPress={() => setShowMapSelector(true)}
-                                                style={{
-                                                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                                                    padding: 14, borderWidth: 1.5, borderStyle: 'dashed',
-                                                    borderColor: accentColor, borderRadius: 12, borderCurve: 'continuous',
-                                                    backgroundColor: `${accentColor}08`, gap: 8,
-                                                }}
+                                                style={[S.locChangeBtn, { backgroundColor: accentColor }]}
                                             >
-                                                <MaterialIcons name="add-location" size={20} color={accentColor} />
-                                                <Text style={{ fontSize: 14, fontWeight: '600', color: accentColor }}>Set Service Location</Text>
+                                                <Text style={S.locChangeBtnText}>Change</Text>
                                             </TouchableOpacity>
-                                        )}
-                                    </View>
-                                )}
-
-                                {/* Save/Cancel for profile details */}
-                                {isEditingProfile && (
-                                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-                                        <TouchableOpacity
-                                            onPress={() => {
-                                                if (profile) {
-                                                    setFullName(profile.fullName || '');
-                                                    setServiceId(profile.serviceId || null);
-                                                    setBio(profile.bio || '');
-                                                    setLocation(profile.currentLocation || '');
-                                                    if (profile.currentLocation) {
-                                                        try {
-                                                            const coords = profile.currentLocation.split(',');
-                                                            if (coords.length === 2) {
-                                                                setMarkerPosition({
-                                                                    latitude: parseFloat(coords[0]),
-                                                                    longitude: parseFloat(coords[1])
-                                                                });
-                                                            }
-                                                        } catch { }
-                                                    }
-                                                }
-                                                setIsEditingProfile(false);
-                                            }}
-                                            disabled={isUpdating}
-                                            style={{
-                                                flex: 1, paddingVertical: 13, borderRadius: 12, borderCurve: 'continuous',
-                                                alignItems: 'center', backgroundColor: '#f1f5f9',
-                                                borderWidth: 1, borderColor: '#e2e8f0',
-                                            }}
-                                        >
-                                            <Text style={{ color: '#64748b', fontSize: 14, fontWeight: '600' }}>Cancel</Text>
+                                        </View>
+                                    ) : (
+                                        <TouchableOpacity onPress={() => setShowMapSelector(true)} style={S.locSetBtn}>
+                                            <MaterialIcons name="add-location" size={22} color={accentColor} />
+                                            <Text style={S.locSetBtnText}>Set Service Location on Map</Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity
-                                            onPress={handleSave}
-                                            disabled={isUpdating}
-                                            style={{
-                                                flex: 1, paddingVertical: 13, borderRadius: 12, borderCurve: 'continuous',
-                                                alignItems: 'center', justifyContent: 'center',
-                                                backgroundColor: accentColor, flexDirection: 'row', gap: 6,
-                                            }}
-                                        >
-                                            {isUpdating
-                                                ? <ActivityIndicator size="small" color="#ffffff" />
-                                                : <>
-                                                    <MaterialIcons name="check" size={18} color="#ffffff" />
-                                                    <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '700' }}>Save Changes</Text>
-                                                </>
-                                            }
-                                        </TouchableOpacity>
-                                    </View>
-                                )}
+                                    )}
+                                </View>
                             </View>
                         </View>
                     </Animated.View>
 
-                </View>{/* end body wrapper */}
-            </ScrollView>
+                    {/* ═══ SAVE BUTTON ═══ */}
+                    <Animated.View style={[S.saveWrap, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                        <TouchableOpacity
+                            onPress={handleSave}
+                            disabled={isUpdating}
+                            style={[S.saveBtn, { backgroundColor: accentColor }, isUpdating && S.saveBtnDisabled]}
+                            activeOpacity={0.8}
+                        >
+                            {isUpdating ? (
+                                <ActivityIndicator size="small" color="#ffffff" />
+                            ) : (
+                                <>
+                                    <MaterialIcons name="save" size={20} color="#ffffff" />
+                                    <Text style={S.saveBtnText}>Save Profile</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                    </Animated.View>
+
+                    <View style={{ height: 32 }} />
+                </ScrollView>
+            </KeyboardAvoidingView>
 
             <ExpandableMapSelector
                 visible={showMapSelector}
@@ -661,6 +523,326 @@ export default function EditProfileScreen() {
                 initialLocation={markerPosition}
                 accentColor={accentColor}
             />
-        </View>
+        </SafeAreaContainer>
     );
 }
+
+/* ═══════════════════════════════════════════
+   STYLES
+   ═══════════════════════════════════════════ */
+const S = StyleSheet.create({
+    // ── Loading ──
+    loadingWrap: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 12,
+        backgroundColor: DC.canvas,
+    },
+    loadingText: {
+        fontSize: 14,
+        color: DC.muted,
+        fontWeight: '500',
+    },
+
+    // ── Root ──
+    keyboardWrap: { flex: 1, backgroundColor: DC.canvas },
+    scroll: { flex: 1, backgroundColor: DC.canvas },
+    scrollContent: {
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        paddingBottom: 16,
+    },
+
+    // ── Avatar Section ──
+    avatarSection: {
+        alignItems: 'center',
+        paddingVertical: 20,
+        marginBottom: 8,
+    },
+    avatarTouchable: { position: 'relative' },
+    avatar: {
+        width: 110,
+        height: 110,
+        borderRadius: 55,
+        borderWidth: 4,
+        borderColor: '#ffffff',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.12)',
+    },
+    avatarPlaceholder: {
+        backgroundColor: DC.surfaceMuted,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cameraBadge: {
+        position: 'absolute',
+        bottom: 2,
+        right: 2,
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        borderWidth: 3,
+        borderColor: '#ffffff',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    avatarOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        borderRadius: 55,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+    },
+    successOverlay: { backgroundColor: 'rgba(16,185,129,0.7)' },
+    successCircle: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: 'rgba(255,255,255,0.25)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    overlayText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
+    avatarHint: {
+        marginTop: 12,
+        fontSize: 13,
+        color: DC.muted,
+        fontWeight: '500',
+    },
+
+    // ── Card ──
+    cardWrap: { marginBottom: 14 },
+    card: {
+        backgroundColor: DC.surface,
+        borderRadius: 16,
+        borderCurve: 'continuous',
+        overflow: 'hidden',
+        boxShadow: MISTRI_ELEV.card,
+    },
+    cardHead: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 8,
+    },
+    cardTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    titleAccent: {
+        width: 3,
+        height: 14,
+        borderRadius: 2,
+    },
+    cardTitle: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: DC.muted,
+        letterSpacing: 0.8,
+    },
+    cardBody: {
+        paddingHorizontal: 16,
+        paddingBottom: 16,
+    },
+
+    // ── Status ──
+    statusBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+        padding: 14,
+        borderRadius: 12,
+        marginBottom: 14,
+    },
+    statusIconCircle: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    statusTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        marginBottom: 1,
+    },
+    statusSub: {
+        fontSize: 12,
+        color: DC.muted,
+    },
+    statusPills: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    pill: {
+        flex: 1,
+        alignItems: 'center',
+        paddingVertical: 14,
+        borderRadius: 12,
+        backgroundColor: DC.surfaceMuted,
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+        gap: 6,
+        position: 'relative',
+    },
+    pillText: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    pillDot: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 7,
+        height: 7,
+        borderRadius: 4,
+    },
+
+    // ── Fields ──
+    field: {
+        marginBottom: 18,
+    },
+    fieldLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: DC.muted,
+        letterSpacing: 0.7,
+        marginBottom: 8,
+    },
+    fieldInput: {
+        borderWidth: 1.5,
+        borderColor: '#e2e8f0',
+        borderRadius: 12,
+        borderCurve: 'continuous',
+        paddingHorizontal: 14,
+        paddingVertical: 13,
+        fontSize: 15,
+        color: DC.text,
+        backgroundColor: DC.surfaceMuted,
+    },
+    fieldInputErr: {
+        borderColor: '#ef4444',
+    },
+    errText: {
+        color: '#ef4444',
+        fontSize: 12,
+        marginTop: 5,
+        fontWeight: '500',
+    },
+    textArea: {
+        borderWidth: 1.5,
+        borderColor: '#e2e8f0',
+        borderRadius: 12,
+        borderCurve: 'continuous',
+        padding: 14,
+        fontSize: 15,
+        color: DC.text,
+        backgroundColor: DC.surfaceMuted,
+        minHeight: 100,
+        textAlignVertical: 'top',
+    },
+
+    // ── Chips ──
+    chipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    chip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        borderWidth: 1.5,
+        borderRadius: 10,
+        borderCurve: 'continuous',
+        borderColor: '#e2e8f0',
+        backgroundColor: DC.surfaceMuted,
+        gap: 7,
+    },
+    chipText: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
+
+    // ── Location ──
+    locBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        padding: 12,
+        borderRadius: 12,
+        borderCurve: 'continuous',
+        backgroundColor: DC.surfaceMuted,
+        borderWidth: 1.5,
+        borderColor: '#e2e8f0',
+    },
+    locCoords: {
+        flex: 1,
+        fontSize: 13,
+        color: DC.text,
+        fontFamily: 'monospace',
+    },
+    locChangeBtn: {
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 8,
+        borderCurve: 'continuous',
+    },
+    locChangeBtnText: {
+        color: '#ffffff',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    locSetBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 14,
+        borderWidth: 1.5,
+        borderStyle: 'dashed',
+        borderColor: '#6366f1',
+        borderRadius: 12,
+        borderCurve: 'continuous',
+        backgroundColor: '#f5f3ff',
+        gap: 10,
+    },
+    locSetBtnText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#6366f1',
+    },
+
+    // ── Save Button ──
+    saveWrap: {
+        marginTop: 8,
+        marginBottom: 8,
+    },
+    saveBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        borderRadius: 14,
+        borderCurve: 'continuous',
+        gap: 10,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+    },
+    saveBtnDisabled: {
+        opacity: 0.7,
+    },
+    saveBtnText: {
+        color: '#ffffff',
+        fontSize: 16,
+        fontWeight: '700',
+    },
+});

@@ -29,7 +29,7 @@ const ACTIVE_BLUE = '#2563eb';
 const INACTIVE_COLOR = '#94a3b8';
 const INACTIVE_LABEL = '#64748b';
 
-// ✅ Updated paths to match what usePathname() returns
+// Updated paths to match what usePathname() returns
 const TABS = [
     {
         label: 'Home',
@@ -65,33 +65,39 @@ const TABS = [
     },
 ];
 
-// ✅ Pages where the navbar should be shown
-const NAVBAR_PATHS = [
+// ✅ EXPORT: Pages where the navbar should be shown
+export const NAVBAR_PATHS = [
     '/',
     '/services',
     '/requests',
     '/settings',
 ];
 
-export default function CustomBottomNavbar() {
-    const router = useRouter();
-    const pathname = usePathname();
-    const insets = useSafeAreaInsets();
-
-    // ✅ Check if navbar should be shown on this page
-    const shouldShowNavbar = NAVBAR_PATHS.some(path => {
+// ✅ EXPORT: Helper function to check if navbar should be shown
+export const shouldShowNavbar = (pathname: string): boolean => {
+    return NAVBAR_PATHS.some(path => {
         if (path === '/') {
             return pathname === '/' || pathname === '';
         }
         return pathname.startsWith(path);
     });
+};
 
-    // ✅ If not on a navbar page, return null (don't render anything)
-    if (!shouldShowNavbar) {
+export default function CustomBottomNavbar() {
+    const router = useRouter();
+    const pathname = usePathname();
+    const insets = useSafeAreaInsets();
+
+    // Check if navbar should be shown on this page
+    const showNavbar = shouldShowNavbar(pathname);
+
+    // ✅ If not on a navbar page, return null (don't render ANYTHING)
+    // This removes all UI elements, padding, and spacing
+    if (!showNavbar) {
         return null;
     }
 
-    // ✅ Fixed active tab detection
+    // Fixed active tab detection
     const getActiveIndex = () => {
         for (let i = 0; i < TABS.length; i++) {
             const tab = TABS[i];
@@ -186,6 +192,7 @@ const styles = StyleSheet.create({
         right: 0,
         alignItems: 'center',
         zIndex: 1000,
+        // ✅ No padding or margins - the component renders nothing when hidden
     },
     container: {
         width: width - 32,
