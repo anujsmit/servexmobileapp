@@ -15,6 +15,8 @@ export interface User {
     approvalRejectionReason?: string | null;
     defaultLocation?: string | null;
     isVerified?: boolean;
+    deletionScheduledAt?: string | null;
+    hasScheduledDeletion?: boolean;
     [key: string]: any;
 }
 
@@ -34,6 +36,8 @@ export interface LoginResponse {
     refreshToken?: string;
     expiresAt?: number;
     user?: User;
+    requiresDeletionAction?: boolean;
+    deletionScheduledAt?: string | null;
 }
 
 type AuthContextData = {
@@ -51,6 +55,9 @@ type AuthContextData = {
     getMe: () => Promise<void>;
     refreshUser: () => Promise<void>;
     refreshAccessToken: () => Promise<string | null>;
+    // ✅ New functions
+    cancelDeletion: () => Promise<void>;
+    getDeletionStatus: () => Promise<{ deletionScheduledAt: string | null } | null>;
 };
 
 const AuthContext = createContext<AuthContextData>({} as AuthContextData);
@@ -69,9 +76,7 @@ const isExpoGo = (): boolean => {
 // FIXED: Disable auto-registration in Expo Go
 if (isExpoGo()) {
     try {
-        // Try to import and disable auto-registration
         const Notifications = require('expo-notifications');
-        // This prevents the auto-registration from running
         if (Notifications.default?.setAutoRegistrationEnabled) {
             Notifications.default.setAutoRegistrationEnabled(false);
         }
@@ -165,7 +170,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                         } else if (storedToken) {
                             await validateUserExists(storedToken);
                             scheduleTokenRefresh();
-                            // Only register push token if not in Expo Go
                             if (!isExpoGo() && getProjectId()) {
                                 registerPushToken(storedToken);
                             }
@@ -358,6 +362,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    // ✅ Updated loginWithPassword to handle deletion status
     const loginWithPassword = async (phone: string, password: string): Promise<LoginResponse> => {
         const response = await fetch(`${API_URL}/api/auth/login`, {
             method: 'POST',
@@ -379,6 +384,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const newRefreshToken = data.refreshToken;
         const expiryTime = data.expiresAt || (Date.now() + 7 * 24 * 60 * 60 * 1000);
 
+        // ✅ Store token even if deletion is scheduled (so user can cancel it)
         setToken(accessToken);
         tokenRef.current = accessToken;
         setRefreshToken(newRefreshToken);
@@ -398,7 +404,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             registerPushToken(accessToken);
         }
 
-        return { isVerified: true, user: data.user, accessToken };
+        // ✅ Return deletion status if present
+        return {
+            isVerified: true,
+            user: data.user,
+            accessToken,
+            requiresDeletionAction: data.requiresDeletionAction || false,
+            deletionScheduledAt: data.deletionScheduledAt || null,
+        };
     };
 
     const sendOtp = async (phone: string) => {
@@ -511,6 +524,69 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    // ✅ Cancel account deletion
+    const cancelDeletion = async (): Promise<void> => {
+        const authToken = tokenRef.current || token;
+        if (!authToken) throw new Error('Not authenticated');
+
+        try {
+            const response = await fetch(`${API_URL}/api/auth/cancel-deletion`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || 'Failed to cancel deletion');
+            }
+
+            const data = await response.json();
+            
+            // ✅ Update user state
+            if (user) {
+                const updatedUser = {
+                    ...user,
+                    deletionScheduledAt: null,
+                    hasScheduledDeletion: false,
+                };
+                setUser(updatedUser);
+                await SecureStore.setItemAsync('user', JSON.stringify(updatedUser));
+            }
+
+            return data;
+        } catch (error) {
+            console.error('Error cancelling deletion:', error);
+            throw error;
+        }
+    };
+
+    // ✅ Get deletion status
+    const getDeletionStatus = async (): Promise<{ deletionScheduledAt: string | null } | null> => {
+        const authToken = tokenRef.current || token;
+        if (!authToken) return null;
+
+        try {
+            const response = await fetch(`${API_URL}/api/auth/deletion-status`, {
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
+
+            if (!response.ok) {
+                return null;
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Error getting deletion status:', error);
+            return null;
+        }
+    };
+
     const logout = async () => {
         if (tokenRefreshTimeout.current) {
             clearTimeout(tokenRefreshTimeout.current);
@@ -605,7 +681,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             logout,
             getMe,
             refreshUser: getMe,
-            refreshAccessToken
+            refreshAccessToken,
+            // ✅ New functions
+            cancelDeletion,
+            getDeletionStatus,
         }}>
             {children}
         </AuthContext.Provider>

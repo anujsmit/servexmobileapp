@@ -16,6 +16,7 @@ import {
     Image,
     NativeSyntheticEvent,
     NativeScrollEvent,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -26,6 +27,7 @@ import { StatusBar } from 'expo-status-bar';
 import NepaliDate from 'nepali-date-converter';
 import { useAuth } from '../../context/AuthContext';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { DeletionPromptModal } from '../../components/DeletionPromptModal';
 
 const { width, height } = Dimensions.get('window');
 
@@ -119,17 +121,10 @@ const calculateAgeFromNepaliDate = (nepaliDateStr: string): number | null => {
     }
 };
 
-// BUG FIX: the previous implementation guessed days-per-month from a
-// hardcoded table and a `year % 3 === 0` leap-year rule, which is not how
-// the Bikram Sambat calendar actually works and produced wrong day counts
-// for many years. Instead, we ask the date-conversion library itself:
-// convert "the 1st of next month" to the Gregorian calendar, step back one
-// day, then convert that back to BS - the resulting day number is exactly
-// how many days the requested month has.
 const getDaysInMonth = (month: number, year: number): number => {
     if (!month || !year) return 32;
     try {
-        const nextMonthIndex = month === 12 ? 0 : month; // getMonth()/constructor month index is 0-based
+        const nextMonthIndex = month === 12 ? 0 : month;
         const nextYear = month === 12 ? year + 1 : year;
         const firstOfNextMonth = new NepaliDate(nextYear, nextMonthIndex, 1).toJsDate();
         const lastDayOfThisMonth = new Date(firstOfNextMonth.getTime() - 24 * 60 * 60 * 1000);
@@ -182,7 +177,6 @@ const DatePickerModal = ({
         }
     };
 
-    // Open/close animation + jump every wheel to the currently selected value
     useEffect(() => {
         if (visible) {
             let y = '';
@@ -218,7 +212,6 @@ const DatePickerModal = ({
                 }),
             ]).start();
 
-            // Wait one tick for the lists to lay out, then jump to position.
             const timeout = setTimeout(() => {
                 scrollToValue(yearScrollRef, years, parseInt(y, 10));
                 scrollToValue(monthScrollRef, months, parseInt(m, 10));
@@ -232,13 +225,8 @@ const DatePickerModal = ({
             Animated.timing(slideAnim, { toValue: height, duration: 220, useNativeDriver: true }),
         ]).start();
         return undefined;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
 
-    // BUG FIX: if the user picks a month/year with fewer days than the one
-    // currently selected (e.g. switching from a 32-day month to a 29-day
-    // one), the old code left the day untouched, leaving an impossible
-    // date like "Poush 32". Clamp it down and re-center the day wheel.
     useEffect(() => {
         if (!visible || !selectedDay) return;
         const maxDay = daysInSelectedMonth;
@@ -246,7 +234,6 @@ const DatePickerModal = ({
             setSelectedDay(String(maxDay));
             scrollToValue(dayScrollRef, dayList, maxDay, true);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedMonth, selectedYear]);
 
     const selectValue = (
@@ -471,7 +458,7 @@ const DatePickerModal = ({
 
 export default function LoginScreen() {
     const router = useRouter();
-    const { loginWithPassword, register, isLoading: authLoading } = useAuth();
+    const { loginWithPassword, register, isLoading: authLoading, cancelDeletion, logout, user } = useAuth();
     const params = useLocalSearchParams<{ role?: string }>();
 
     const role: RoleParam = params.role === 'mistri' ? 'mistri' : 'user';
@@ -489,6 +476,11 @@ export default function LoginScreen() {
     const [showPassword, setShowPassword] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [focusedField, setFocusedField] = useState<FieldName | null>(null);
+    
+    // ✅ Deletion prompt state
+    const [showDeletionPrompt, setShowDeletionPrompt] = useState(false);
+    const [deletionDate, setDeletionDate] = useState<string | null>(null);
+    const [isCancellingDeletion, setIsCancellingDeletion] = useState(false);
 
     const nameInputRef = useRef<TextInput>(null);
     const phoneInputRef = useRef<TextInput>(null);
@@ -498,9 +490,7 @@ export default function LoginScreen() {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const riseAnim = useRef(new Animated.Value(16)).current;
     const shakeAnim = useRef(new Animated.Value(0)).current;
-    // Animated pill that slides behind the Login/Sign Up switch
     const switchAnim = useRef(new Animated.Value(0)).current;
-    // Press-feedback scale for the primary button
     const buttonScale = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
@@ -598,6 +588,64 @@ export default function LoginScreen() {
         }
     };
 
+    // ✅ Handle cancel deletion
+    const handleCancelDeletion = async () => {
+        try {
+            setIsCancellingDeletion(true);
+            await cancelDeletion();
+            setShowDeletionPrompt(false);
+            
+            // Show success message
+            Alert.alert(
+                'Deletion Cancelled',
+                'Your account deletion has been cancelled. You can continue using ServeX.',
+                [
+                    {
+                        text: 'Continue',
+                        onPress: () => {
+                            // Navigate to dashboard based on role
+                            const userRole = user?.role;
+                            if (userRole === 'mistri') {
+                                const isOnboarded = user?.isOnboarded;
+                                const approvalStatus = user?.approvalStatus;
+                                
+                                if (!isOnboarded) {
+                                    router.replace('/onboarding/mistri');
+                                } else if (approvalStatus !== 'approved') {
+                                    router.replace('/pending-approval');
+                                } else {
+                                    router.replace('/(protected)/(mistri)');
+                                }
+                            } else {
+                                const isOnboarded = user?.isOnboarded;
+                                if (!isOnboarded) {
+                                    router.replace('/onboarding/customer');
+                                } else {
+                                    router.replace('/(protected)/(customer)');
+                                }
+                            }
+                        },
+                    },
+                ]
+            );
+        } catch (error) {
+            Alert.alert(
+                'Error',
+                error instanceof Error ? error.message : 'Failed to cancel deletion'
+            );
+        } finally {
+            setIsCancellingDeletion(false);
+        }
+    };
+
+    // ✅ Handle logout from deletion prompt
+    const handleLogoutFromDeletion = async () => {
+        await logout();
+        setShowDeletionPrompt(false);
+        // Stay on login screen
+        showToast('info', 'Logged Out', 'You have been logged out');
+    };
+
     const handleContinue = async () => {
         if (!validateForm()) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -633,6 +681,15 @@ export default function LoginScreen() {
                 });
             } else {
                 const response = await loginWithPassword(formData.phone, formData.password);
+                
+                // ✅ Check if account has scheduled deletion
+                if (response?.requiresDeletionAction && response?.deletionScheduledAt) {
+                    setDeletionDate(response.deletionScheduledAt);
+                    setShowDeletionPrompt(true);
+                    setIsSubmitting(false);
+                    return;
+                }
+
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
                 if (response?.isVerified === false || response?.user?.isVerified === false) {
@@ -684,7 +741,7 @@ export default function LoginScreen() {
 
     const isLoading = isSubmitting || authLoading;
 
-    const switchContainerWidth = width - 48; // matches marginHorizontal: 24 on both sides
+    const switchContainerWidth = width - 48;
     const switchPadding = 4;
     const pillWidth = (switchContainerWidth - switchPadding * 2) / 2;
     const pillLeft = switchAnim.interpolate({
@@ -1003,6 +1060,15 @@ export default function LoginScreen() {
                     }}
                     initialDate={formData.dob}
                     accentColor={config.accent}
+                />
+
+                {/* ✅ Deletion Prompt Modal */}
+                <DeletionPromptModal
+                    visible={showDeletionPrompt}
+                    deletionDate={deletionDate}
+                    onCancelDeletion={handleCancelDeletion}
+                    onLogout={handleLogoutFromDeletion}
+                    isLoading={isCancellingDeletion}
                 />
             </SafeAreaView>
             <Toast />

@@ -1,21 +1,27 @@
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import { View, StyleSheet, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import CustomBottomNavbar from '../../../components/CustomBottomNavbarCustomer';
+import CustomBottomNavbar, { shouldShowNavbar } from '../../../components/CustomBottomNavbarCustomer';
 
 const { width } = Dimensions.get('window');
 
 export default function CustomerLayout() {
     const insets = useSafeAreaInsets();
+    const pathname = usePathname();
+    
+    // Check if the navbar is active on the current page
+    const isNavbarVisible = shouldShowNavbar(pathname);
     
     // Calculate navbar height including its bottom position
     const navbarHeight = 70; // Height from CustomBottomNavbar container
     const navbarBottom = Math.max(insets.bottom, 16); // Bottom offset from CustomBottomNavbar
-    const totalNavbarSpace = navbarHeight + navbarBottom + 16; // Extra 16px for some spacing
+    
+    // Only apply padding space if the navbar should actually be shown on this page
+    const totalNavbarSpace = isNavbarVisible ? (navbarHeight + navbarBottom + 16) : 0;
 
     return (
         <View style={styles.container}>
-            {/* The main screen stack content with bottom padding */}
+            {/* The main screen stack content with conditional bottom padding */}
             <View style={[styles.content, { paddingBottom: totalNavbarSpace }]}>
                 <Stack
                     screenOptions={{
@@ -38,6 +44,5 @@ const styles = StyleSheet.create({
     },
     content: {
         flex: 1,
-        
     },
 });
