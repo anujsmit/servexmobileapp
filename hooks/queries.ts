@@ -1,13 +1,18 @@
+// hooks/queries.ts
+
 import { useQuery, UseQueryResult, useQueryClient, useMutation } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 
 // API base URL
 import { API_BASE_URL as API_URL } from '../lib/config';
 
-// Shared service request type
+// ============================================
+// SHARED TYPES
+// ============================================
+
 export interface ServiceRequest {
     id: string;
-    type: string; // Dynamic service type from database
+    type: string;
     address: string;
     status: 'pending' | 'assigned' | 'canceled' | 'completed';
     createdAt: string;
@@ -16,6 +21,157 @@ export interface ServiceRequest {
     assignedMistriId?: string;
     unpaid: boolean;
 }
+
+export type OrderStatus = 
+    | 'pending' 
+    | 'confirmed' 
+    | 'assigned' 
+    | 'in_progress' 
+    | 'completed' 
+    | 'cancelled' 
+    | 'rejected';
+
+export type PaymentStatus = 
+    | 'pending' 
+    | 'paid' 
+    | 'failed' 
+    | 'refunded';
+
+export interface OrderItem {
+    id: string;
+    serviceItemId: string;
+    name: string;
+    description: string | null;
+    price: number;
+    quantity: number;
+    subtotal: number;
+    durationMinutes: number | null;
+    imageUrl: string | null;
+}
+
+export interface OrderTimelineEvent {
+    id: string;
+    status: OrderStatus;
+    note: string | null;
+    metadata: any | null;
+    createdAt: string;
+}
+
+export interface Order {
+    id: string;
+    customerId: string;
+    assignedMistriId: string | null;
+    serviceRequestId: string | null;
+    status: OrderStatus;
+    paymentStatus: PaymentStatus;
+    subtotal: number;
+    tax: number;
+    deliveryFee: number;
+    discount: number;
+    total: number;
+    address: string;
+    city: string | null;
+    zipCode: string | null;
+    latitude: string | null;
+    longitude: string | null;
+    customerNotes: string | null;
+    adminNotes: string | null;
+    paymentMethod: 'cash' | 'card' | 'online';
+    paymentDetails: any | null;
+    scheduledDate: string | null;
+    scheduledTime: string | null;
+    createdAt: string;
+    updatedAt: string;
+    confirmedAt: string | null;
+    assignedAt: string | null;
+    completedAt: string | null;
+    cancelledAt: string | null;
+    items: OrderItem[];
+    timeline: OrderTimelineEvent[];
+    itemCount: number;
+    mistriDetails?: {
+        id: string;
+        fullName: string;
+        phoneNumber: string;
+        profilePhotoUrl: string;
+        averageRating: string;
+        jobsCompleted: number;
+    } | null;
+}
+
+export interface CombinedRequest {
+    id: string;
+    type: 'service_request' | 'order';
+    originalId: string;
+    title: string;
+    address: string;
+    status: string;
+    statusLabel: string;
+    statusColor: string;
+    createdAt: string;
+    assignedAt?: string | null;
+    assignedMistriId?: string | null;
+    unpaid?: boolean;
+    total: number;
+    itemCount?: number;
+    items?: any[];
+    mistriDetails?: any | null;
+    originalData: any;
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+        'pending': 'Pending Approval',
+        'assigned': 'Assigned',
+        'completed': 'Completed ✅',
+        'canceled': 'Canceled',
+    };
+    return labels[status] || status;
+};
+
+const getStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+        'pending': '#f59e0b',
+        'assigned': '#3b82f6',
+        'completed': '#10b981',
+        'canceled': '#ef4444',
+    };
+    return colors[status] || '#94a3b8';
+};
+
+const getOrderStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+        'pending': 'Pending',
+        'confirmed': 'Confirmed',
+        'assigned': 'Assigned',
+        'in_progress': 'In Progress',
+        'completed': 'Completed ✅',
+        'cancelled': 'Cancelled',
+        'rejected': 'Rejected',
+    };
+    return labels[status] || status;
+};
+
+const getOrderStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+        'pending': '#f59e0b',
+        'confirmed': '#3b82f6',
+        'assigned': '#8b5cf6',
+        'in_progress': '#f59e0b',
+        'completed': '#10b981',
+        'cancelled': '#ef4444',
+        'rejected': '#ef4444',
+    };
+    return colors[status] || '#94a3b8';
+};
+
+// ============================================
+// SERVICE REQUEST HOOKS
+// ============================================
 
 /**
  * Fetch customer service requests (for the logged-in customer)
@@ -31,7 +187,6 @@ const fetchCustomerRequests = async (): Promise<ServiceRequest[]> => {
     }
     const data = await response.json();
     const requests = data.requests as ServiceRequest[];
-    // Deduplicate by id to guard against any backend/cache anomalies
     const seen = new Set<string>();
     return requests.filter(r => {
         if (seen.has(r.id)) return false;
@@ -40,15 +195,12 @@ const fetchCustomerRequests = async (): Promise<ServiceRequest[]> => {
     });
 };
 
-/**
- * React Query hook to get customer requests
- */
 export const useCustomerRequestsQuery = () => {
     return useQuery({
         queryKey: ['customerRequests'],
         queryFn: fetchCustomerRequests,
-        staleTime: 5 * 60 * 1000,       // 5 minutes
-        refetchInterval: 5000,          // Poll every 5 seconds for real-time updates
+        staleTime: 5 * 60 * 1000,
+        refetchInterval: 5000,
         refetchOnWindowFocus: true,
     });
 };
@@ -70,9 +222,6 @@ const fetchMistriJobs = async (): Promise<ServiceRequest[]> => {
     return data.requests as ServiceRequest[];
 };
 
-/**
- * React Query hook to get mistri jobs
- */
 export const useMistriJobsQuery = () => {
     return useQuery({
         queryKey: ['mistriJobs'],
@@ -86,13 +235,13 @@ export const useMistriJobsQuery = () => {
  * Create a new service request
  */
 const createServiceRequest = async (requestBody: {
-    type: string; // Dynamic service type from database
-    platformServiceIds?: string[]; // Array of platform service IDs
+    type: string;
+    platformServiceIds?: string[];
     coords: { lat: number; lng: number };
     address: string;
     source: 'gps' | 'drag';
-    selectedMistriId?: string; // For targeted requests
-    customerNotes?: string; // Custom description/notes from customer
+    selectedMistriId?: string;
+    customerNotes?: string;
 }): Promise<{ requestId: string; status: string }> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
@@ -112,15 +261,11 @@ const createServiceRequest = async (requestBody: {
     };
 };
 
-/**
- * React Query mutation hook for creating service requests
- */
 export const useCreateServiceRequest = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: createServiceRequest,
         onSuccess: (data, variables) => {
-            // Optimistically add new request to the customerRequests cache
             const newReq = {
                 id: data.requestId,
                 type: variables.type,
@@ -131,11 +276,9 @@ export const useCreateServiceRequest = () => {
             };
             queryClient.setQueryData<ServiceRequest[]>(['customerRequests'], (old) => {
                 const existing = old ?? [];
-                // Avoid duplicate if item already exists (e.g. from a concurrent refetch)
                 if (existing.some(r => r.id === data.requestId)) return existing;
                 return [newReq, ...existing];
             });
-            // Invalidate so the next background refetch replaces the optimistic item with server truth
             queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
             queryClient.invalidateQueries({ queryKey: ['mistriJobs'] });
         },
@@ -157,9 +300,6 @@ const cancelServiceRequest = async (id: string): Promise<void> => {
     }
 };
 
-/**
- * React Query mutation hook for canceling service requests
- */
 export const useCancelServiceRequest = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -176,7 +316,7 @@ export const useCancelServiceRequest = () => {
 export interface ServiceRequestDetail extends ServiceRequest {
     lat?: string;
     lng?: string;
-    customerNotes?: string; // Custom description/notes from customer
+    customerNotes?: string;
 }
 
 export interface MistriDetails {
@@ -204,8 +344,8 @@ export interface ServiceRequestResponse {
         price: string;
         imageUrl?: string;
     }>;
-    mistriDetails?: MistriDetails; // Included when status is 'assigned' or 'completed' (for customer)
-    customerDetails?: CustomerDetails; // Included when status is 'assigned' or 'completed' (for mistri)
+    mistriDetails?: MistriDetails;
+    customerDetails?: CustomerDetails;
 }
 
 const fetchServiceRequestById = async (id: string): Promise<ServiceRequestResponse> => {
@@ -235,7 +375,7 @@ export const useServiceRequestQuery = (
     });
 };
 
-// Types for nearby mistris
+// ---- Nearby Mistris ----
 export interface NearbyMistri {
     id: string;
     fullName: string;
@@ -252,9 +392,6 @@ export interface NearbyMistri {
     };
 }
 
-/**
- * Fetch nearby mistris based on customer location
- */
 const fetchNearbyMistris = async (customerLocation: { lat: number; lng: number; maxDistanceKm?: number }): Promise<NearbyMistri[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
@@ -277,16 +414,13 @@ const fetchNearbyMistris = async (customerLocation: { lat: number; lng: number; 
     return data.mistris as NearbyMistri[];
 };
 
-/**
- * React Query hook to get nearby mistris
- */
 export const useNearbyMistrisQuery = (customerLocation: { lat: number; lng: number; maxDistanceKm?: number } | null) => {
     return useQuery({
         queryKey: ['nearbyMistris', customerLocation],
         queryFn: () => fetchNearbyMistris(customerLocation!),
         enabled: !!customerLocation,
-        staleTime: 0, // Always stale — mistri availability changes in real-time
-        refetchOnMount: 'always', // Force fresh fetch every time the screen mounts
+        staleTime: 0,
+        refetchOnMount: 'always',
         refetchOnWindowFocus: true,
     });
 };
@@ -294,7 +428,7 @@ export const useNearbyMistrisQuery = (customerLocation: { lat: number; lng: numb
 // ---- Targeted Requests (for mistris) ----
 export interface TargetedRequest {
     id: string;
-    type: string; // Dynamic service type from database
+    type: string;
     lat: string;
     lng: string;
     address: string;
@@ -306,9 +440,6 @@ export interface TargetedRequest {
     completedAt?: string;
 }
 
-/**
- * Fetch targeted requests (requests assigned to current mistri)
- */
 const fetchTargetedRequests = async (): Promise<TargetedRequest[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
@@ -328,16 +459,12 @@ const fetchTargetedRequests = async (): Promise<TargetedRequest[]> => {
     return data.requests as TargetedRequest[];
 };
 
-/**
- * React Query hook to get targeted requests for mistri
- * @param options.enablePolling - If false, disables the 10-second polling (e.g., when mistri is unavailable/on_work)
- */
 export const useTargetedRequestsQuery = (options?: { enablePolling?: boolean }) => {
     const shouldPoll = options?.enablePolling !== false;
     return useQuery({
         queryKey: ['targetedRequests'],
         queryFn: fetchTargetedRequests,
-        refetchInterval: shouldPoll ? 10000 : false, // Poll every 10 seconds only when available
+        refetchInterval: shouldPoll ? 10000 : false,
         refetchOnWindowFocus: true,
     });
 };
@@ -345,7 +472,7 @@ export const useTargetedRequestsQuery = (options?: { enablePolling?: boolean }) 
 // ---- Mistri Accepted Jobs ----
 export interface MistriJob {
     id: string;
-    type: string; // Dynamic service type from database
+    type: string;
     lat: string;
     lng: string;
     address: string;
@@ -358,9 +485,6 @@ export interface MistriJob {
     unpaid: boolean;
 }
 
-/**
- * Fetch mistri's accepted jobs (jobs where status is 'assigned' and assignedMistriId matches current mistri)
- */
 const fetchMistriAcceptedJobs = async (): Promise<MistriJob[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
@@ -380,17 +504,13 @@ const fetchMistriAcceptedJobs = async (): Promise<MistriJob[]> => {
     return data.jobs as MistriJob[];
 };
 
-/**
- * React Query hook to get mistri's accepted jobs
- * @param options.enablePolling - If false, disables the 10-second polling (e.g., when mistri is unavailable/on_work)
- */
 export const useMistriAcceptedJobsQuery = (options?: { enablePolling?: boolean }) => {
     const shouldPoll = options?.enablePolling !== false;
     return useQuery({
         queryKey: ['mistriAcceptedJobs'],
         queryFn: fetchMistriAcceptedJobs,
-        staleTime: 5 * 60 * 1000, // 5 minutes
-        refetchInterval: shouldPoll ? 10000 : false, // Poll every 10 seconds only when available
+        staleTime: 5 * 60 * 1000,
+        refetchInterval: shouldPoll ? 10000 : false,
         refetchOnWindowFocus: true,
     });
 };
@@ -402,7 +522,6 @@ export interface MistriProfile {
     phoneNumber: string;
     serviceId: number;
     serviceName: string;
-    /** From `services.map_icon_color` — plumber/electrician brand color */
     mapIconColor?: string | null;
     profilePhotoUrl?: string;
     bio?: string;
@@ -413,9 +532,6 @@ export interface MistriProfile {
     jobsCompleted: number;
 }
 
-/**
- * Fetch mistri profile for the current user
- */
 const fetchMistriProfile = async (): Promise<MistriProfile> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
@@ -430,22 +546,16 @@ const fetchMistriProfile = async (): Promise<MistriProfile> => {
     return data.profile as MistriProfile;
 };
 
-/**
- * React Query hook to get mistri profile
- */
 export const useMistriProfileQuery = () => {
     return useQuery({
         queryKey: ['mistriProfile'],
         queryFn: fetchMistriProfile,
-        staleTime: 5 * 60 * 1000, // 5 minutes
-        gcTime: Infinity, // Keep profile cached indefinitely
-        refetchOnWindowFocus: false, // Don't refetch on window focus for static profile data
+        staleTime: 5 * 60 * 1000,
+        gcTime: Infinity,
+        refetchOnWindowFocus: false,
     });
 };
 
-/**
- * Update mistri profile
- */
 const updateMistriProfileApi = async (updates: {
     serviceId?: number;
     profilePhotoBase64?: string;
@@ -473,16 +583,12 @@ const updateMistriProfileApi = async (updates: {
     return data.profile as MistriProfile;
 };
 
-/**
- * React Query mutation hook for updating mistri profile
- */
 export const useUpdateMistriProfile = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: updateMistriProfileApi,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['mistriProfile'] });
-            // Also invalidate user data in auth context if needed
         },
     });
 };
@@ -593,6 +699,31 @@ export const useDeclineServiceRequest = () => {
     });
 };
 
+// ---- Start Work ----
+const startWorkApi = async (id: string): Promise<void> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    const response = await fetch(`${API_URL}/api/service-requests/${id}/start-work`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to start work');
+    }
+};
+
+export const useStartWork = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: startWorkApi,
+        onSuccess: (_data, id) => {
+            queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
+        },
+    });
+};
+
 // ---- Notifications ----
 export interface Notification {
     id: string;
@@ -623,7 +754,7 @@ export const useNotificationsQuery = () => {
     return useQuery({
         queryKey: ['notifications'],
         queryFn: fetchNotifications,
-        refetchInterval: 5000, // Poll every 5 seconds
+        refetchInterval: 5000,
         refetchOnWindowFocus: true,
     });
 };
@@ -692,9 +823,6 @@ export interface PlatformServiceCategory {
     services: PlatformService[];
 }
 
-/**
- * Fetch all platform services grouped by category
- */
 const fetchPlatformServices = async (): Promise<PlatformServiceCategory[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
@@ -709,14 +837,11 @@ const fetchPlatformServices = async (): Promise<PlatformServiceCategory[]> => {
     return data.categories as PlatformServiceCategory[];
 };
 
-/**
- * React Query hook to get platform services
- */
 export const usePlatformServicesQuery = () => {
     return useQuery({
         queryKey: ['platformServices'],
         queryFn: fetchPlatformServices,
-        staleTime: 10 * 60 * 1000, // 10 minutes - platform services don't change often
+        staleTime: 10 * 60 * 1000,
         refetchOnWindowFocus: false,
     });
 };
@@ -744,9 +869,6 @@ export interface RatingWithCustomer {
     customerName: string;
 }
 
-/**
- * Create a rating (customer only)
- */
 const createRatingApi = async (ratingData: {
     serviceRequestId: string;
     rating: number;
@@ -767,9 +889,6 @@ const createRatingApi = async (ratingData: {
     return data.rating as Rating;
 };
 
-/**
- * React Query mutation hook for creating ratings
- */
 export const useCreateRating = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -783,9 +902,6 @@ export const useCreateRating = () => {
     });
 };
 
-/**
- * Get all ratings for a mistri
- */
 const fetchMistriRatings = async (mistriId: string): Promise<{
     ratings: RatingWithCustomer[];
     averageRating: number;
@@ -808,9 +924,6 @@ const fetchMistriRatings = async (mistriId: string): Promise<{
     };
 };
 
-/**
- * React Query hook to get mistri ratings
- */
 export const useMistriRatingsQuery = (mistriId: string | null) => {
     return useQuery({
         queryKey: ['ratings', mistriId],
@@ -821,9 +934,6 @@ export const useMistriRatingsQuery = (mistriId: string | null) => {
     });
 };
 
-/**
- * Fetch ratings received by the authenticated mistri
- */
 const fetchMyRatings = async (): Promise<{
     ratings: (Rating & { requestId: string; customerName: string })[];
     averageRating: number;
@@ -846,9 +956,6 @@ const fetchMyRatings = async (): Promise<{
     };
 };
 
-/**
- * React Query hook to get ratings for the authenticated mistri
- */
 export const useMistriReceivedRatingsQuery = () => {
     return useQuery({
         queryKey: ['myRatings'],
@@ -858,9 +965,6 @@ export const useMistriReceivedRatingsQuery = () => {
     });
 };
 
-/**
- * Check if a service request has been rated
- */
 const checkIfRated = async (serviceRequestId: string): Promise<{
     isRated: boolean;
     rating: Rating | null;
@@ -881,9 +985,6 @@ const checkIfRated = async (serviceRequestId: string): Promise<{
     };
 };
 
-/**
- * React Query hook to check if service request is rated
- */
 export const useRatingStatusQuery = (serviceRequestId: string | null) => {
     return useQuery({
         queryKey: ['ratingStatus', serviceRequestId],
@@ -941,9 +1042,6 @@ export interface EarningsResponse {
     };
 }
 
-/**
- * Fetch earnings data for mistri
- */
 const fetchEarnings = async (period: string = 'month', page: number = 1, limit: number = 20): Promise<EarningsResponse> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
@@ -958,21 +1056,15 @@ const fetchEarnings = async (period: string = 'month', page: number = 1, limit: 
     return data as EarningsResponse;
 };
 
-/**
- * React Query hook to get earnings data
- */
 export const useEarningsQuery = (period: string = 'month', page: number = 1, limit: number = 20) => {
     return useQuery({
         queryKey: ['earnings', period, page, limit],
         queryFn: () => fetchEarnings(period, page, limit),
-        staleTime: 2 * 60 * 1000, // 2 minutes
+        staleTime: 2 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 };
 
-/**
- * Mark a job as paid
- */
 const markJobAsPaidApi = async (id: string): Promise<{
     success: boolean;
     message: string;
@@ -993,9 +1085,6 @@ const markJobAsPaidApi = async (id: string): Promise<{
     return await response.json();
 };
 
-/**
- * React Query mutation hook for marking job as paid
- */
 export const useMarkJobAsPaid = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -1006,4 +1095,269 @@ export const useMarkJobAsPaid = () => {
             queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
         },
     });
+};
+
+// ========================================
+// ORDER HOOKS
+// ========================================
+
+/**
+ * Fetch customer orders
+ */
+const fetchCustomerOrders = async (status?: string): Promise<Order[]> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+
+    const url = status && status !== 'all' 
+        ? `${API_URL}/api/orders?status=${status}`
+        : `${API_URL}/api/orders`;
+
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Failed to fetch orders');
+    }
+
+    const data = await response.json();
+    return data.orders || [];
+};
+
+export const useCustomerOrdersQuery = (status?: string) => {
+    return useQuery({
+        queryKey: ['customerOrders', status],
+        queryFn: () => fetchCustomerOrders(status),
+        staleTime: 5 * 60 * 1000,
+        refetchInterval: 30000,
+        refetchOnWindowFocus: true,
+    });
+};
+
+/**
+ * Fetch order by ID
+ */
+const fetchOrderById = async (orderId: string): Promise<Order> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+
+    const response = await fetch(`${API_URL}/api/orders/${orderId}`, {
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Failed to fetch order');
+    }
+
+    const data = await response.json();
+    return data.order;
+};
+
+export const useOrderQuery = (orderId: string | null) => {
+    return useQuery({
+        queryKey: ['order', orderId],
+        queryFn: () => fetchOrderById(orderId!),
+        enabled: !!orderId,
+        staleTime: 5 * 60 * 1000,
+        refetchInterval: 30000,
+        refetchOnWindowFocus: true,
+    });
+};
+
+/**
+ * Create a new order
+ */
+const createOrderApi = async (orderData: {
+    items: Array<{
+        serviceItemId: string;
+        quantity: number;
+    }>;
+    address: string;
+    city?: string;
+    zipCode?: string;
+    latitude?: number;
+    longitude?: number;
+    customerNotes?: string;
+    paymentMethod: 'cash' | 'card' | 'online';
+    scheduledDate?: string;
+    scheduledTime?: string;
+    email?: string;
+}): Promise<{ success: boolean; message: string; order: Order }> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+
+    const response = await fetch(`${API_URL}/api/orders`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(orderData),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Failed to create order');
+    }
+
+    return await response.json();
+};
+
+export const useCreateOrder = () => {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: createOrderApi,
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ['customerOrders'] });
+            queryClient.setQueryData<Order[]>(['customerOrders'], (old) => {
+                if (!old) return [data.order];
+                return [data.order, ...old];
+            });
+        },
+    });
+};
+
+/**
+ * Cancel an order
+ */
+const cancelOrderApi = async (orderId: string, reason?: string): Promise<{ success: boolean; message: string; order: Order }> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+
+    const response = await fetch(`${API_URL}/api/orders/${orderId}/cancel`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason: reason || 'Customer cancelled' }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Failed to cancel order');
+    }
+
+    return await response.json();
+};
+
+export const useCancelOrder = () => {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: ({ orderId, reason }: { orderId: string; reason?: string }) => 
+            cancelOrderApi(orderId, reason),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['customerOrders'] });
+            queryClient.invalidateQueries({ queryKey: ['order'] });
+        },
+    });
+};
+
+/**
+ * Get order counts by status
+ */
+const fetchOrderCounts = async (): Promise<Record<string, number>> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+
+    const response = await fetch(`${API_URL}/api/orders/counts`, {
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Failed to fetch order counts');
+    }
+
+    const data = await response.json();
+    return data.counts;
+};
+
+export const useOrderCountsQuery = () => {
+    return useQuery({
+        queryKey: ['orderCounts'],
+        queryFn: fetchOrderCounts,
+        staleTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: true,
+    });
+};
+
+// ========================================
+// COMBINED REQUESTS HOOK
+// ========================================
+
+export const useCombinedRequests = (statusFilter?: string) => {
+    const { data: serviceRequests = [], isLoading: isLoadingService } = useCustomerRequestsQuery();
+    const { data: orders = [], isLoading: isLoadingOrders } = useCustomerOrdersQuery(statusFilter);
+
+    const isLoading = isLoadingService || isLoadingOrders;
+
+    const combinedRequests = useQuery({
+        queryKey: ['combinedRequests', statusFilter],
+        queryFn: () => {
+            const serviceRequestsMapped: CombinedRequest[] = serviceRequests.map((req: any) => ({
+                id: `sr_${req.id}`,
+                type: 'service_request',
+                originalId: req.id,
+                title: req.type?.charAt(0).toUpperCase() + req.type?.slice(1) || 'Service Request',
+                address: req.address,
+                status: req.status,
+                statusLabel: getStatusLabel(req.status),
+                statusColor: getStatusColor(req.status),
+                createdAt: req.createdAt,
+                assignedAt: req.assignedAt,
+                assignedMistriId: req.assignedMistriId,
+                unpaid: req.unpaid,
+                total: parseFloat(req.paymentAmount || '0'),
+                itemCount: 1,
+                items: null,
+                mistriDetails: req.mistriDetails || null,
+                originalData: req,
+            }));
+
+            const ordersMapped: CombinedRequest[] = orders.map((order: any) => ({
+                id: `ord_${order.id}`,
+                type: 'order',
+                originalId: order.id,
+                title: `Order #${order.id.slice(0, 8).toUpperCase()}`,
+                address: order.address,
+                status: order.status,
+                statusLabel: getOrderStatusLabel(order.status),
+                statusColor: getOrderStatusColor(order.status),
+                createdAt: order.createdAt,
+                assignedAt: order.assignedAt,
+                assignedMistriId: order.assignedMistriId,
+                unpaid: order.paymentStatus === 'pending',
+                total: parseFloat(order.total || '0'),
+                itemCount: order.itemCount || 0,
+                items: order.items || [],
+                mistriDetails: order.mistriDetails || null,
+                originalData: order,
+            }));
+
+            const combined = [...serviceRequestsMapped, ...ordersMapped];
+            combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+            return combined;
+        },
+        enabled: !isLoading,
+    });
+
+    return {
+        data: combinedRequests.data || [],
+        isLoading,
+        serviceRequests,
+        orders,
+        refetch: combinedRequests.refetch,
+    };
 };

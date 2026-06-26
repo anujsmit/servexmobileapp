@@ -797,10 +797,11 @@ export default function LoginScreen() {
                             <TouchableOpacity
                                 onPress={() => {
                                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                    router.back();
+                                    router.replace('/');
                                 }}
-                                style={styles.backButton}
+                                style={[styles.backButton, isLoading && styles.disabledOpacity]}
                                 activeOpacity={0.7}
+                                disabled={isLoading}
                                 accessibilityRole="button"
                                 accessibilityLabel="Go back"
                             >

@@ -54,6 +54,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
     plugins: [
         "@rnmapbox/maps",
+        "react-native-document-scanner-plugin",
+        [
+            "expo-camera",
+            {
+                "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera"
+            }
+        ],
         "expo-router",
         [
             "expo-splash-screen",
@@ -92,9 +99,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         typedRoutes: true
     },
     "extra": {
-      "eas": {
-        "projectId": "8daf9335-5cbc-4c09-8b37-8c35eb60c402"
-      }
+        "eas": {
+            "projectId": "8daf9335-5cbc-4c09-8b37-8c35eb60c402"
+        }
     },
     owner: "anujkattel"
 });

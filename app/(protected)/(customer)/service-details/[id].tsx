@@ -17,14 +17,24 @@ import {
     Dimensions,
     Animated,
     Easing,
+    Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useAuth } from '../../../../context/AuthContext';
 import { useLocation } from '../../../../context/LocationContext';
-import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import * as Haptics from 'expo-haptics';
+import { useAddToCart } from '../../../../hooks/cart';
+
+const { width } = Dimensions.get('window');
+
+// ============================================
+// TYPES
+// ============================================
 
 interface ServiceDetails {
     id: string;
@@ -41,6 +51,10 @@ interface Coordinates {
     longitude: number;
 }
 
+// ============================================
+// HELPERS
+// ============================================
+
 const getInitials = (name: string): string => {
     return name
         .split(' ')
@@ -50,36 +64,63 @@ const getInitials = (name: string): string => {
         .substring(0, 2);
 };
 
+const hexToRgba = (hex: string, alpha: number): string => {
+    const clean = hex.replace('#', '');
+    const r = parseInt(clean.substring(0, 2), 16);
+    const g = parseInt(clean.substring(2, 4), 16);
+    const b = parseInt(clean.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const darkenHex = (hex: string, amount: number = 0.15): string => {
+    const clean = hex.replace('#', '');
+    let r = parseInt(clean.substring(0, 2), 16);
+    let g = parseInt(clean.substring(2, 4), 16);
+    let b = parseInt(clean.substring(4, 6), 16);
+    r = Math.round(r * (1 - amount));
+    g = Math.round(g * (1 - amount));
+    b = Math.round(b * (1 - amount));
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
+
 export default function ServiceDetailsScreen() {
-    const { id, name, price, description, imageUrl, categoryName } = useLocalSearchParams();
+    const { id, name, price, description, imageUrl, categoryName, categoryColor } =
+        useLocalSearchParams();
     const { user, token, refreshAccessToken, logout, isTokenRefreshing } = useAuth();
-    const { 
-        address: contextAddress, 
+    const {
+        address: contextAddress,
         coordinates: contextCoordinates,
         setCustomLocation,
     } = useLocation();
     const router = useRouter();
     const navigation = useNavigation();
-    
-    // Get role-based colors
-    const isMistri = user?.role === 'mistri';
-    const primaryColor = isMistri ? '#179d2e' : '#0177b8';
-    const primaryLight = isMistri ? '#179d2e20' : '#0177b820';
-    const gradientColors = isMistri ? ['#179d2e', '#0e6b20'] : ['#0177b8', '#005a8f'];
-    
+    const { mutateAsync: addToCart } = useAddToCart();
+
+    // Dynamic theming from category color
+    const primaryColor = (categoryColor as string) || '#2563eb';
+
     const [service, setService] = useState<ServiceDetails | null>(null);
     const [loading, setLoading] = useState(true);
     const [bookingModalVisible, setBookingModalVisible] = useState(false);
     const [submitting, setSubmitting] = useState(false);
-    
+    const [isInCart, setIsInCart] = useState(false);
+    const [isUpdating, setIsUpdating] = useState(false);
+
     // Success animation states
     const [successModalVisible, setSuccessModalVisible] = useState(false);
-    const [bookingData, setBookingData] = useState<{ requestId: string; serviceName: string } | null>(null);
+    const [bookingData, setBookingData] = useState<{
+        requestId: string;
+        serviceName: string;
+    } | null>(null);
     const scaleAnim = useRef(new Animated.Value(0)).current;
     const checkAnim = useRef(new Animated.Value(0)).current;
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(50)).current;
-    
+
     // Location states
     const [showLocationModal, setShowLocationModal] = useState(false);
     const [selectedLocation, setSelectedLocation] = useState<Coordinates | null>(null);
@@ -88,12 +129,13 @@ export default function ServiceDetailsScreen() {
     const [manualAddress, setManualAddress] = useState('');
     const [locationMethod, setLocationMethod] = useState<'auto' | 'manual'>('auto');
     const [tempMarkerLocation, setTempMarkerLocation] = useState<Coordinates | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [isSearchingAddress, setIsSearchingAddress] = useState(false);
-    
+
     const mapRef = useRef<MapView>(null);
 
-    // Initialize local states with context data when modal opens
+    // ---- Initialize location modal state from context ----
     useEffect(() => {
         if (showLocationModal) {
             setTempMarkerLocation(contextCoordinates);
@@ -101,29 +143,29 @@ export default function ServiceDetailsScreen() {
             setLocationAddress(contextAddress || '');
             setManualAddress(contextAddress || '');
             setSearchResults([]);
+            setSearchQuery('');
         }
     }, [showLocationModal]);
 
+    // ---- Header config & initial fetch ----
     useEffect(() => {
         navigation.setOptions({
             title: (name as string) || 'Service Details',
-            headerTitleStyle: { fontWeight: '600', fontSize: 18 },
+            headerTitleStyle: { fontWeight: '600', fontSize: 18, color: '#0f172a' },
             headerShadowVisible: false,
             headerStyle: { backgroundColor: '#ffffff' },
         });
         fetchServiceDetails();
     }, [id]);
 
-    // Success animation trigger
+    // ---- Success animation ----
     useEffect(() => {
         if (successModalVisible) {
-            // Reset animations
             scaleAnim.setValue(0);
             checkAnim.setValue(0);
             fadeAnim.setValue(0);
             slideAnim.setValue(50);
-            
-            // Sequence animations
+
             Animated.sequence([
                 Animated.timing(scaleAnim, {
                     toValue: 1,
@@ -154,6 +196,10 @@ export default function ServiceDetailsScreen() {
         }
     }, [successModalVisible]);
 
+    // ============================================
+    // DATA FETCHING
+    // ============================================
+
     const fetchServiceDetails = async () => {
         setLoading(true);
         try {
@@ -176,12 +222,24 @@ export default function ServiceDetailsScreen() {
             }
         } catch (error) {
             console.error('Error fetching service details:', error);
+            setService({
+                id: id as string,
+                name: name as string,
+                description: (description as string) || null,
+                price: price as string,
+                imageUrl: (imageUrl as string) || null,
+                duration_minutes: null,
+                categoryName: categoryName as string,
+            });
         } finally {
             setLoading(false);
         }
     };
 
-    // Address Lookup using OS Nominatim Engine
+    // ============================================
+    // LOCATION HELPERS
+    // ============================================
+
     const searchAddress = async (query: string) => {
         if (query.length < 3) {
             setSearchResults([]);
@@ -192,11 +250,7 @@ export default function ServiceDetailsScreen() {
         try {
             const response = await fetch(
                 `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`,
-                {
-                    headers: {
-                        'User-Agent': 'ServiceApp/1.0',
-                    }
-                }
+                { headers: { 'User-Agent': 'ServiceApp/1.0' } },
             );
             const data = await response.json();
             setSearchResults(data || []);
@@ -212,13 +266,16 @@ export default function ServiceDetailsScreen() {
             latitude: parseFloat(result.lat),
             longitude: parseFloat(result.lon),
         };
-        
+
         setTempMarkerLocation(coords);
         setSelectedLocation(coords);
         setLocationAddress(result.display_name);
         setManualAddress(result.display_name);
         setSearchResults([]);
+        setSearchQuery('');
         Keyboard.dismiss();
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     };
 
     const detectCurrentLocation = async () => {
@@ -226,7 +283,10 @@ export default function ServiceDetailsScreen() {
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
-                Alert.alert('Permission Denied', 'Please enable location permissions to use auto-detection.');
+                Alert.alert(
+                    'Permission Denied',
+                    'Please enable location permissions to use auto-detection.',
+                );
                 setLocationMethod('manual');
                 return;
             }
@@ -234,33 +294,38 @@ export default function ServiceDetailsScreen() {
             const location = await Location.getCurrentPositionAsync({
                 accuracy: Location.Accuracy.High,
             });
-            
+
             const coords = {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
             };
-            
+
             setTempMarkerLocation(coords);
             setSelectedLocation(coords);
-            
+
             const addressResult = await Location.reverseGeocodeAsync(coords);
             if (addressResult.length > 0) {
                 const { name: locName, street, city, country } = addressResult[0];
-                const formattedAddress = `${locName || street || ''}, ${city || ''}, ${country || ''}`.replace(/^,\s*|,\s*$/, '');
+                const formattedAddress = `${locName || street || ''}, ${city || ''}, ${country || ''}`
+                    .replace(/^,\s*|,\s*$/, '');
                 setLocationAddress(formattedAddress);
                 setManualAddress(formattedAddress);
             }
-            
+
             if (mapRef.current) {
-                mapRef.current.animateToRegion({
-                    ...coords,
-                    latitudeDelta: 0.01,
-                    longitudeDelta: 0.01,
-                }, 1000);
+                mapRef.current.animateToRegion(
+                    { ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+                    1000,
+                );
             }
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (error) {
             console.error('Error detecting location:', error);
-            Alert.alert('Error', 'Failed to detect your location. Please try manual entry.');
+            Alert.alert(
+                'Error',
+                'Failed to detect your location. Please try manual entry.',
+            );
             setLocationMethod('manual');
         } finally {
             setIsDetectingLocation(false);
@@ -272,7 +337,7 @@ export default function ServiceDetailsScreen() {
             Alert.alert('Error', 'Please enter an address');
             return;
         }
-        
+
         setIsDetectingLocation(true);
         try {
             const geocoded = await Location.geocodeAsync(manualAddress);
@@ -284,6 +349,8 @@ export default function ServiceDetailsScreen() {
                 setTempMarkerLocation(coords);
                 setSelectedLocation(coords);
                 setLocationAddress(manualAddress);
+
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } else {
                 Alert.alert('Error', 'Address not found. Please try a different address.');
             }
@@ -303,28 +370,156 @@ export default function ServiceDetailsScreen() {
                 address: locationAddress,
             });
             setShowLocationModal(false);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } else {
             Alert.alert('Location Empty', 'Please select or discover a location before saving.');
+        }
+    };
+
+    // ============================================
+    // CART & BOOKING ACTIONS
+    // ============================================
+
+    const handleAddToCart = async () => {
+        if (isUpdating || !service) return;
+        setIsUpdating(true);
+
+        try {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            await addToCart({ serviceItemId: service.id, quantity: 1 });
+            setIsInCart(true);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('Added to Cart', `${service.name} has been added to your cart.`, [
+                { text: 'Continue Shopping', style: 'cancel' },
+                { text: 'View Cart', onPress: () => router.push('/cart') },
+            ]);
+        } catch (error) {
+            console.error('Error adding to cart:', error);
+            Alert.alert('Error', 'Failed to add to cart. Please try again.');
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        } finally {
+            setIsUpdating(false);
+        }
+    };
+
+    const handleOrderNow = () => {
+        if (!contextCoordinates) {
+            Alert.alert(
+                'Location Required',
+                'Please set your service location before ordering.',
+                [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Set Location', onPress: () => setShowLocationModal(true) },
+                ],
+            );
+            return;
+        }
+        if (!token) {
+            Alert.alert('Error', 'Please login to continue');
+            router.replace('/(auth)/login');
+            return;
+        }
+
+        if (isInCart) {
+            router.push('/cart');
+            return;
+        }
+
+        setBookingModalVisible(true);
+    };
+
+    const handleConfirmBooking = async () => {
+        setSubmitting(true);
+        try {
+            let serviceType =
+                (categoryName as string) ||
+                service?.categoryName ||
+                service?.name ||
+                (id as string);
+            serviceType = serviceType.replace(/\s*Service\s*/gi, '').trim();
+
+            const serviceTypeMap: Record<string, string> = {
+                plumber: 'plumber',
+                Plumber: 'plumber',
+                electrician: 'electrician',
+                Electrician: 'electrician',
+                painter: 'painter',
+                Painter: 'painter',
+                carpenter: 'carpenter',
+                Carpenter: 'carpenter',
+                cleaning: 'cleaning',
+                Cleaning: 'cleaning',
+                plumbing: 'plumber',
+                Plumbing: 'plumber',
+                electrical: 'electrician',
+                Electrical: 'electrician',
+                tap: 'plumber',
+                pipe: 'plumber',
+            };
+
+            const finalServiceType =
+                serviceTypeMap[serviceType] || serviceType.toLowerCase() || 'plumber';
+
+            const requestBody = {
+                type: finalServiceType,
+                platformServiceIds: [id],
+                coords: {
+                    lat: contextCoordinates?.latitude || 27.7172,
+                    lng: contextCoordinates?.longitude || 85.324,
+                },
+                address: contextAddress,
+                source: 'gps',
+            };
+
+            const response = await makeAuthenticatedRequest(
+                `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/service-requests`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify(requestBody),
+                },
+            );
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                setBookingModalVisible(false);
+                setBookingData({
+                    requestId: data.requestId || 'SR' + Date.now().toString().slice(-6),
+                    serviceName: service?.name || 'Service',
+                });
+                setSuccessModalVisible(true);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } else {
+                Alert.alert('Error', data.message || 'Failed to submit booking');
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            }
+        } catch (error: any) {
+            console.error('Error submitting booking:', error);
+            if (error.message !== 'Session expired') {
+                Alert.alert('Error', 'Network error. Please try again.');
+            }
+        } finally {
+            setSubmitting(false);
         }
     };
 
     const makeAuthenticatedRequest = async (url: string, options: RequestInit = {}) => {
         let currentToken = token;
         if (!currentToken) throw new Error('No token available');
-        
+
         const makeRequest = async (authToken: string) => {
             return fetch(url, {
                 ...options,
                 headers: {
                     'Content-Type': 'application/json',
                     ...options.headers,
-                    'Authorization': `Bearer ${authToken}`,
+                    Authorization: `Bearer ${authToken}`,
                 },
             });
         };
 
         let response = await makeRequest(currentToken);
-        
+
         if (response.status === 401) {
             const newToken = await refreshAccessToken();
             if (newToken) {
@@ -345,124 +540,6 @@ export default function ServiceDetailsScreen() {
         return response;
     };
 
-    const handleBookNow = () => {
-        if (!contextCoordinates) {
-            Alert.alert(
-                'Location Required',
-                'Please set your service location before booking.',
-                [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Set Location', onPress: () => setShowLocationModal(true) }
-                ]
-            );
-            return;
-        }
-        if (!token) {
-            Alert.alert('Error', 'Please login to continue');
-            router.replace('/(auth)/login');
-            return;
-        }
-        setBookingModalVisible(true);
-    };
-
-const handleConfirmBooking = async () => {
-    setSubmitting(true);
-    try {
-        // ✅ Get the service type from multiple sources
-        let serviceType = '';
-
-        // Try to get from categoryName first
-        if (categoryName) {
-            serviceType = categoryName as string;
-        } 
-        // Then try from service.categoryName
-        else if (service?.categoryName) {
-            serviceType = service.categoryName;
-        }
-        // Then try from service.name
-        else if (service?.name) {
-            serviceType = service.name;
-        }
-        // Fallback to the id param
-        else {
-            serviceType = id as string;
-        }
-
-        // ✅ Clean up the service type - remove "Service" suffix if present
-        serviceType = serviceType.replace(/\s*Service\s*/gi, '').trim();
-
-        // ✅ Map to valid service type
-        const serviceTypeMap: Record<string, string> = {
-            'plumber': 'plumber',
-            'Plumber': 'plumber',
-            'electrician': 'electrician',
-            'Electrician': 'electrician',
-            'painter': 'painter',
-            'Painter': 'painter',
-            'carpenter': 'carpenter',
-            'Carpenter': 'carpenter',
-            'cleaning': 'cleaning',
-            'Cleaning': 'cleaning',
-            'plumbing': 'plumber',
-            'Plumbing': 'plumber',
-            'electrical': 'electrician',
-            'Electrical': 'electrician',
-        };
-
-        // ✅ Get the mapped service type
-        const finalServiceType = serviceTypeMap[serviceType] || serviceType.toLowerCase() || 'plumber';
-        
-        console.log('📝 Booking Details:');
-        console.log('  Original serviceType:', serviceType);
-        console.log('  Final serviceType:', finalServiceType);
-        console.log('  Service name:', service?.name);
-        console.log('  Category name:', categoryName);
-        console.log('  Service ID:', id);
-
-        const requestBody = {
-            type: finalServiceType,
-            platformServiceIds: [id],
-            coords: {
-                lat: contextCoordinates?.latitude || 27.7172,
-                lng: contextCoordinates?.longitude || 85.324,
-            },
-            address: contextAddress,
-            source: 'gps',
-        };
-
-        console.log('📤 Request body:', JSON.stringify(requestBody, null, 2));
-
-        const response = await makeAuthenticatedRequest(
-            `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/service-requests`,
-            {
-                method: 'POST',
-                body: JSON.stringify(requestBody),
-            }
-        );
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            setBookingModalVisible(false);
-            setBookingData({
-                requestId: data.requestId || 'SR' + Date.now().toString().slice(-6),
-                serviceName: service?.name || 'Service',
-            });
-            setSuccessModalVisible(true);
-        } else {
-            console.error('❌ Booking error:', data);
-            Alert.alert('Error', data.message || 'Failed to submit booking');
-        }
-    } catch (error: any) {
-        console.error('❌ Error submitting booking:', error);
-        if (error.message !== 'Session expired') {
-            Alert.alert('Error', 'Network error. Please try again.');
-        }
-    } finally {
-        setSubmitting(false);
-    }
-};
-
     const handleSuccessAction = (action: 'home' | 'status') => {
         setSuccessModalVisible(false);
         if (action === 'home') {
@@ -473,11 +550,11 @@ const handleConfirmBooking = async () => {
     };
 
     // ============================================
-    // RENDER FUNCTIONS
+    // RENDER: SERVICE DETAILS
     // ============================================
 
-    const renderServiceDetails = () => {
-        const data = service || {
+    const getServiceData = () =>
+        service || {
             id: id as string,
             name: name as string,
             description: description as string,
@@ -485,36 +562,68 @@ const handleConfirmBooking = async () => {
             imageUrl: imageUrl as string,
         };
 
+    const renderServiceDetails = () => {
+        const data = getServiceData();
+        const initials = getInitials(data.name);
+
         return (
             <>
-                {/* Hero Image */}
+                {/* ---- Hero Image ---- */}
                 <View style={styles.imageContainer}>
                     {data.imageUrl ? (
-                        <Image source={{ uri: data.imageUrl }} style={styles.heroImage} resizeMode="cover" />
+                        <Image
+                            source={{ uri: data.imageUrl }}
+                            style={styles.heroImage}
+                            resizeMode="cover"
+                        />
                     ) : (
-                        <LinearGradient colors={gradientColors} style={styles.heroImagePlaceholder}>
-                            <Text style={styles.heroInitials}>{getInitials(data.name)}</Text>
+                        <LinearGradient
+                            colors={[primaryColor, darkenHex(primaryColor, 0.2)]}
+                            style={styles.heroImagePlaceholder}
+                        >
+                            <Text style={styles.heroInitials}>{initials}</Text>
                         </LinearGradient>
                     )}
+
+                    {/* Gradient overlay for readability */}
+                    <LinearGradient
+                        colors={['transparent', 'rgba(0,0,0,0.45)']}
+                        style={styles.imageGradientOverlay}
+                    />
+
+                    {/* Price badge — positioned at bottom-left over the gradient */}
                     <View style={[styles.priceBadge, { backgroundColor: primaryColor }]}>
                         <Text style={styles.priceBadgeText}>
-                            रु {parseFloat(data.price || '0').toLocaleString()}
+                            रु {parseFloat(data.price || '0').toLocaleString('en-IN')}
                         </Text>
                     </View>
                 </View>
 
-                {/* Service Info */}
+                {/* ---- Service Info ---- */}
                 <View style={styles.infoContainer}>
-                    <Text style={styles.serviceName}>{data.name}</Text>
-                    
-                    <View style={styles.ratingContainer}>
-                        <View style={styles.stars}>
-                            {[1, 2, 3, 4, 5].map((star) => (
-                                <MaterialIcons key={star} name="star" size={18} color="#fbbf24" />
-                            ))}
+                    {categoryName && (
+                        <View
+                            style={[
+                                styles.categoryChip,
+                                { backgroundColor: hexToRgba(primaryColor, 0.08) },
+                            ]}
+                        >
+                            <Text style={{ color: primaryColor, fontSize: 12, fontWeight: '600' }}>
+                                {categoryName}
+                            </Text>
                         </View>
-                        <Text style={styles.ratingText}>4.8 (1,234 reviews)</Text>
-                    </View>
+                    )}
+
+                    <Text style={styles.serviceName}>{data.name}</Text>
+
+                    {service?.duration_minutes && (
+                        <View style={styles.durationRow}>
+                            <Ionicons name="time-outline" size={16} color="#64748b" />
+                            <Text style={styles.durationText}>
+                                {service.duration_minutes} minutes estimated
+                            </Text>
+                        </View>
+                    )}
 
                     {data.description && (
                         <View style={styles.section}>
@@ -524,37 +633,40 @@ const handleConfirmBooking = async () => {
                     )}
 
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>What's Included</Text>
+                        <Text style={styles.sectionTitle}>What&apos;s Included</Text>
                         <View style={styles.featuresList}>
-                            <View style={styles.featureItem}>
-                                <MaterialIcons name="verified" size={20} color={primaryColor} />
-                                <Text style={styles.featureText}>Professional & insured</Text>
-                            </View>
-                            <View style={styles.featureItem}>
-                                <MaterialIcons name="timer" size={20} color={primaryColor} />
-                                <Text style={styles.featureText}>On-time arrival guaranteed</Text>
-                            </View>
-                            <View style={styles.featureItem}>
-                                <MaterialIcons name="security" size={20} color={primaryColor} />
-                                <Text style={styles.featureText}>Quality workmanship</Text>
-                            </View>
-                            <View style={styles.featureItem}>
-                                <MaterialIcons name="support-agent" size={20} color={primaryColor} />
-                                <Text style={styles.featureText}>24/7 customer support</Text>
-                            </View>
+                            {[
+                                { icon: 'verified', label: 'Professional & insured' },
+                                { icon: 'timer', label: 'On-time arrival guaranteed' },
+                                { icon: 'security', label: 'Quality workmanship' },
+                                { icon: 'support-agent', label: '24/7 customer support' },
+                            ].map((feat) => (
+                                <View key={feat.icon} style={styles.featureItem}>
+                                    <MaterialIcons name={feat.icon as any} size={20} color={primaryColor} />
+                                    <Text style={styles.featureText}>{feat.label}</Text>
+                                </View>
+                            ))}
                         </View>
                     </View>
 
-                    {/* Location */}
+                    {/* ---- Location ---- */}
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>Service Location</Text>
-                        <TouchableOpacity 
-                            style={[styles.locationCard, { borderColor: primaryLight }]} 
-                            onPress={() => setShowLocationModal(true)} 
+                        <TouchableOpacity
+                            style={[
+                                styles.locationCard,
+                                { borderColor: hexToRgba(primaryColor, 0.12) },
+                            ]}
+                            onPress={() => setShowLocationModal(true)}
                             activeOpacity={0.7}
                         >
-                            <View style={[styles.locationIconContainer, { backgroundColor: primaryLight }]}>
-                                <Ionicons name="location-sharp" size={24} color={primaryColor} />
+                            <View
+                                style={[
+                                    styles.locationIconContainer,
+                                    { backgroundColor: hexToRgba(primaryColor, 0.08) },
+                                ]}
+                            >
+                                <Ionicons name="location-sharp" size={22} color={primaryColor} />
                             </View>
                             <View style={styles.locationInfo}>
                                 <Text style={styles.locationLabel}>Your Address</Text>
@@ -565,105 +677,172 @@ const handleConfirmBooking = async () => {
                             <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
                         </TouchableOpacity>
                     </View>
+
+                    {/* Bottom spacer so footer doesn't overlap last section */}
+                    <View style={styles.contentBottomSpacer} />
                 </View>
             </>
         );
     };
 
+    // ============================================
+    // RENDER: FOOTER
+    // ============================================
+
     const renderFooter = () => {
-        const data = service || {
-            id: id as string,
-            name: name as string,
-            description: description as string,
-            price: price as string,
-            imageUrl: imageUrl as string,
-        };
+        const data = getServiceData();
 
         return (
             <View style={styles.footer}>
                 <View style={styles.priceContainer}>
                     <Text style={styles.priceLabel}>Price</Text>
                     <Text style={[styles.priceAmount, { color: primaryColor }]}>
-                        रु {parseFloat(data.price || '0').toLocaleString()}
+                        रु {parseFloat(data.price || '0').toLocaleString('en-IN')}
                     </Text>
                 </View>
-                <TouchableOpacity 
-                    style={[styles.bookButton, { backgroundColor: primaryColor }]} 
-                    onPress={handleBookNow} 
-                    disabled={isTokenRefreshing}
-                >
-                    {isTokenRefreshing ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                        <>
-                            <Text style={styles.bookButtonText}>Book Now</Text>
-                            <Ionicons name="arrow-forward" size={20} color="#fff" />
-                        </>
-                    )}
-                </TouchableOpacity>
+                <View style={styles.buttonGroup}>
+                    <TouchableOpacity
+                        style={[
+                            styles.addButton,
+                            isInCart && [
+                                styles.addedButton,
+                                {
+                                    borderColor: primaryColor,
+                                    backgroundColor: hexToRgba(primaryColor, 0.06),
+                                },
+                            ],
+                        ]}
+                        onPress={handleAddToCart}
+                        disabled={isUpdating}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={isInCart ? 'checkmark-circle' : 'cart-outline'}
+                            size={20}
+                            color={isInCart ? primaryColor : '#64748b'}
+                        />
+                        <Text
+                            style={[styles.addButtonText, isInCart && { color: primaryColor }]}
+                        >
+                            {isInCart ? 'Added' : 'Cart'}
+                        </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.bookButton, { backgroundColor: primaryColor }]}
+                        onPress={handleOrderNow}
+                        disabled={isTokenRefreshing || isUpdating}
+                        activeOpacity={0.85}
+                    >
+                        {isTokenRefreshing ? (
+                            <ActivityIndicator color="#fff" size="small" />
+                        ) : (
+                            <Text style={styles.bookButtonText}>Order Now</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
             </View>
         );
     };
 
+    // ============================================
+    // RENDER: BOOKING MODAL
+    // ============================================
+
     const renderBookingModal = () => {
-        const data = service || {
-            id: id as string,
-            name: name as string,
-            description: description as string,
-            price: price as string,
-            imageUrl: imageUrl as string,
-        };
+        const data = getServiceData();
+        const priceNum = parseFloat(data.price || '0');
 
         return (
-            <Modal visible={bookingModalVisible} animationType="slide" transparent={true} onRequestClose={() => setBookingModalVisible(false)}>
+            <Modal
+                visible={bookingModalVisible}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => setBookingModalVisible(false)}
+            >
                 <View style={styles.modalOverlay}>
+                    <TouchableWithoutFeedback onPress={() => setBookingModalVisible(false)}>
+                        <View style={styles.modalOverlayTapArea} />
+                    </TouchableWithoutFeedback>
+
                     <View style={styles.modalContent}>
+                        {/* Handle bar */}
+                        <View style={styles.modalHandleBar} />
+
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>Confirm Booking</Text>
-                            <TouchableOpacity onPress={() => setBookingModalVisible(false)}>
+                            <TouchableOpacity
+                                onPress={() => setBookingModalVisible(false)}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
                                 <Ionicons name="close" size={24} color="#64748b" />
                             </TouchableOpacity>
                         </View>
 
-                        <View style={styles.modalBody}>
+                        <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                             <View style={styles.serviceSummary}>
-                                <Text style={styles.summaryServiceName}>{data.name}</Text>
+                                <View style={styles.serviceSummaryInfo}>
+                                    <Text style={styles.summaryServiceName}>{data.name}</Text>
+                                    {categoryName && (
+                                        <Text style={styles.summaryCategory}>{categoryName}</Text>
+                                    )}
+                                </View>
                                 <Text style={[styles.summaryPrice, { color: primaryColor }]}>
-                                    रु {parseFloat(data.price || '0').toLocaleString()}
+                                    रु {priceNum.toLocaleString('en-IN')}
                                 </Text>
                             </View>
 
-                            <View style={[styles.locationSummary, { borderColor: primaryLight }]}>
+                            <View
+                                style={[
+                                    styles.locationSummary,
+                                    { borderColor: hexToRgba(primaryColor, 0.15) },
+                                ]}
+                            >
                                 <MaterialIcons name="location-on" size={20} color={primaryColor} />
-                                <Text style={styles.locationSummaryText}>{contextAddress || 'Location not set'}</Text>
+                                <Text style={styles.locationSummaryText}>
+                                    {contextAddress || 'Location not set'}
+                                </Text>
                             </View>
 
                             <View style={styles.priceBreakdown}>
                                 <View style={styles.breakdownRow}>
                                     <Text style={styles.breakdownLabel}>Service Charge</Text>
-                                    <Text style={styles.breakdownValue}>रु {parseFloat(data.price || '0').toLocaleString()}</Text>
+                                    <Text style={styles.breakdownValue}>
+                                        रु {priceNum.toLocaleString('en-IN')}
+                                    </Text>
                                 </View>
                                 <View style={styles.breakdownDivider} />
                                 <View style={styles.breakdownTotal}>
                                     <Text style={styles.totalLabel}>Total Amount</Text>
                                     <Text style={[styles.totalAmount, { color: primaryColor }]}>
-                                        रु {parseFloat(data.price || '0').toLocaleString()}
+                                        रु {priceNum.toLocaleString('en-IN')}
                                     </Text>
                                 </View>
-                                <Text style={styles.paymentNote}>Payment will be made directly to the professional after service completion</Text>
+                                <Text style={styles.paymentNote}>
+                                    Payment will be made directly to the professional after service
+                                    completion
+                                </Text>
                             </View>
-                        </View>
+                        </ScrollView>
 
                         <View style={styles.modalFooter}>
-                            <TouchableOpacity style={styles.cancelButton} onPress={() => setBookingModalVisible(false)}>
+                            <TouchableOpacity
+                                style={styles.cancelButton}
+                                onPress={() => setBookingModalVisible(false)}
+                                activeOpacity={0.7}
+                            >
                                 <Text style={styles.cancelButtonText}>Cancel</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
-                                style={[styles.confirmButton, { backgroundColor: primaryColor }]} 
-                                onPress={handleConfirmBooking} 
+                            <TouchableOpacity
+                                style={[styles.confirmButton, { backgroundColor: primaryColor }]}
+                                onPress={handleConfirmBooking}
                                 disabled={submitting}
+                                activeOpacity={0.85}
                             >
-                                {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmButtonText}>Confirm Booking</Text>}
+                                {submitting ? (
+                                    <ActivityIndicator color="#fff" size="small" />
+                                ) : (
+                                    <Text style={styles.confirmButtonText}>Confirm Booking</Text>
+                                )}
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -672,232 +851,379 @@ const handleConfirmBooking = async () => {
         );
     };
 
+    // ============================================
+    // RENDER: LOCATION MODAL
+    // ============================================
+
     const renderLocationModal = () => {
         return (
-            <Modal visible={showLocationModal} animationType="slide" transparent={false} onRequestClose={() => setShowLocationModal(false)}>
-                <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-                    <View style={styles.modalContainer}>
-                        <View style={styles.modalHeader}>
-                            <TouchableOpacity onPress={() => setShowLocationModal(false)} style={styles.modalCloseButton}>
-                                <Ionicons name="close" size={24} color="#0f172a" />
-                            </TouchableOpacity>
-                            <Text style={styles.modalTitle}>Select Location</Text>
-                            <View style={{ width: 40 }} />
-                        </View>
-
-                        <View style={styles.methodSelector}>
-                            <TouchableOpacity 
-                                style={[
-                                    styles.methodButton, 
-                                    locationMethod === 'auto' && [styles.methodButtonActive, { borderColor: primaryColor }]
-                                ]} 
-                                onPress={() => setLocationMethod('auto')}
-                            >
-                                <Ionicons name="location" size={20} color={locationMethod === 'auto' ? primaryColor : '#64748b'} />
-                                <Text style={[
-                                    styles.methodText, 
-                                    locationMethod === 'auto' && [styles.methodTextActive, { color: primaryColor }]
-                                ]}>Auto Detect</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity 
-                                style={[
-                                    styles.methodButton, 
-                                    locationMethod === 'manual' && [styles.methodButtonActive, { borderColor: primaryColor }]
-                                ]} 
-                                onPress={() => setLocationMethod('manual')}
-                            >
-                                <Ionicons name="create-outline" size={20} color={locationMethod === 'manual' ? primaryColor : '#64748b'} />
-                                <Text style={[
-                                    styles.methodText, 
-                                    locationMethod === 'manual' && [styles.methodTextActive, { color: primaryColor }]
-                                ]}>Enter Manually</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {locationMethod === 'auto' ? (
-                            <View style={styles.autoLocationContainer}>
-                                {!tempMarkerLocation ? (
-                                    <View style={styles.detectContainer}>
-                                        <MaterialIcons name="gps-fixed" size={48} color={primaryColor} />
-                                        <Text style={styles.detectTitle}>Detect Your Location</Text>
-                                        <Text style={styles.detectSubtitle}>We'll use your GPS to find your current location</Text>
-                                        <TouchableOpacity 
-                                            style={[styles.detectButton, { backgroundColor: primaryColor }]} 
-                                            onPress={detectCurrentLocation} 
-                                            disabled={isDetectingLocation}
-                                        >
-                                            {isDetectingLocation ? <ActivityIndicator color="#fff" /> : <>
-                                                <Ionicons name="location-sharp" size={20} color="#fff" />
-                                                <Text style={styles.detectButtonText}>Detect Location</Text>
-                                            </>}
-                                        </TouchableOpacity>
-                                    </View>
-                                ) : (
-                                    <View style={styles.mapContainer}>
-                                        <MapView
-                                            ref={mapRef}
-                                            style={styles.map}
-                                            initialRegion={{
-                                                latitude: tempMarkerLocation.latitude,
-                                                longitude: tempMarkerLocation.longitude,
-                                                latitudeDelta: 0.01,
-                                                longitudeDelta: 0.01,
-                                            }}
-                                            showsUserLocation={true}
-                                            showsMyLocationButton={false}
-                                        >
-                                            <Marker
-                                                coordinate={tempMarkerLocation}
-                                                draggable
-                                                onDragEnd={(e) => {
-                                                    const coords = e.nativeEvent.coordinate;
-                                                    setTempMarkerLocation(coords);
-                                                    setSelectedLocation(coords);
-                                                    Location.reverseGeocodeAsync(coords).then(result => {
-                                                        if (result.length > 0) {
-                                                            const { name: locName, street, city, country } = result[0];
-                                                            const addr = `${locName || street || ''}, ${city || ''}, ${country || ''}`.replace(/^,\s*|,\s*$/, '');
-                                                            setLocationAddress(addr);
-                                                            setManualAddress(addr);
-                                                        }
-                                                    });
-                                                }}
-                                            />
-                                        </MapView>
-                                        <View style={styles.mapAddressContainer}>
-                                            <Ionicons name="location-sharp" size={18} color={primaryColor} />
-                                            <Text style={styles.mapAddressText} numberOfLines={2}>{locationAddress || 'Drag pin to set location'}</Text>
-                                        </View>
-                                        <TouchableOpacity 
-                                            style={[styles.recenterButton, { borderColor: primaryColor }]} 
-                                            onPress={detectCurrentLocation}
-                                        >
-                                            <Ionicons name="locate" size={20} color={primaryColor} />
-                                        </TouchableOpacity>
-                                    </View>
-                                )}
+            <Modal
+                visible={showLocationModal}
+                animationType="slide"
+                transparent={false}
+                onRequestClose={() => setShowLocationModal(false)}
+            >
+                <SafeAreaView style={styles.locationModalSafeArea} edges={['top']}>
+                    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalHeader}>
+                                <TouchableOpacity
+                                    onPress={() => setShowLocationModal(false)}
+                                    style={styles.modalCloseButton}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                >
+                                    <Ionicons name="close" size={24} color="#0f172a" />
+                                </TouchableOpacity>
+                                <Text style={styles.modalTitle}>Select Location</Text>
+                                <View style={{ width: 40 }} />
                             </View>
-                        ) : (
-                            <View style={styles.manualLocationContainer}>
-                                <View style={styles.searchInputWrapper}>
-                                    <View style={[styles.searchInputContainer, { borderColor: primaryColor }]}>
-                                        <Ionicons name="search" size={20} color="#94a3b8" />
-                                        <TextInput
-                                            style={styles.searchAddressInput}
-                                            placeholder="Search for a location..."
-                                            placeholderTextColor="#94a3b8"
-                                            value={manualAddress}
-                                            onChangeText={(text) => {
-                                                setManualAddress(text);
-                                                searchAddress(text);
-                                            }}
+
+                            {/* Method selector */}
+                            <View style={styles.methodSelector}>
+                                {(['auto', 'manual'] as const).map((method) => (
+                                    <TouchableOpacity
+                                        key={method}
+                                        style={[
+                                            styles.methodButton,
+                                            locationMethod === method && [
+                                                styles.methodButtonActive,
+                                                { borderColor: primaryColor },
+                                            ],
+                                        ]}
+                                        onPress={() => setLocationMethod(method)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons
+                                            name={method === 'auto' ? 'location' : 'create-outline'}
+                                            size={20}
+                                            color={locationMethod === method ? primaryColor : '#64748b'}
                                         />
-                                        {manualAddress.length > 0 && (
-                                            <TouchableOpacity onPress={() => { setManualAddress(''); setSearchResults([]); }}>
-                                                <Ionicons name="close-circle" size={18} color="#94a3b8" />
-                                            </TouchableOpacity>
-                                        )}
-                                    </View>
-                                    
-                                    {isSearchingAddress && (
-                                        <View style={styles.searchingContainer}>
-                                            <ActivityIndicator size="small" color={primaryColor} />
-                                            <Text style={styles.searchingText}>Searching...</Text>
-                                        </View>
-                                    )}
-                                    
-                                    {searchResults.length > 0 && (
-                                        <View style={styles.searchResultsContainer}>
-                                            <ScrollView style={styles.searchResultsScroll} keyboardShouldPersistTaps="handled">
-                                                {searchResults.map((result, index) => (
-                                                    <TouchableOpacity 
-                                                        key={index} 
-                                                        style={styles.searchResultItem} 
-                                                        onPress={() => handleSelectSearchResult(result)}
-                                                    >
-                                                        <Ionicons name="location-outline" size={20} color={primaryColor} />
-                                                        <View style={styles.searchResultTextContainer}>
-                                                            <Text style={styles.searchResultTitle} numberOfLines={1}>{result.display_name.split(',')[0]}</Text>
-                                                            <Text style={styles.searchResultSubtitle} numberOfLines={2}>{result.display_name}</Text>
-                                                        </View>
-                                                    </TouchableOpacity>
-                                                ))}
-                                            </ScrollView>
-                                        </View>
-                                    )}
-                                </View>
-
-                                {tempMarkerLocation && (
-                                    <View style={[styles.previewMapContainer, { borderColor: primaryColor }]}>
-                                        <View style={styles.previewMapHeader}>
-                                            <Text style={styles.previewMapTitle}>Selected Location</Text>
-                                            <TouchableOpacity onPress={() => { setTempMarkerLocation(null); setSelectedLocation(null); }}>
-                                                <Ionicons name="refresh" size={20} color={primaryColor} />
-                                            </TouchableOpacity>
-                                        </View>
-                                        <MapView
-                                            style={styles.previewMap}
-                                            region={{
-                                                latitude: tempMarkerLocation.latitude,
-                                                longitude: tempMarkerLocation.longitude,
-                                                latitudeDelta: 0.01,
-                                                longitudeDelta: 0.01,
-                                            }}
-                                            scrollEnabled={false}
-                                            zoomEnabled={false}
+                                        <Text
+                                            style={[
+                                                styles.methodText,
+                                                locationMethod === method && {
+                                                    color: primaryColor,
+                                                    fontWeight: '600',
+                                                },
+                                            ]}
                                         >
-                                            <Marker coordinate={tempMarkerLocation} />
-                                        </MapView>
-                                        <View style={styles.previewAddressContainer}>
-                                            <Ionicons name="location-sharp" size={16} color={primaryColor} />
-                                            <Text style={styles.previewAddressText} numberOfLines={2}>{locationAddress}</Text>
-                                        </View>
-                                    </View>
-                                )}
-
-                                {!tempMarkerLocation && (
-                                    <>
-                                        <View style={styles.orDivider}>
-                                            <View style={styles.dividerLine} />
-                                            <Text style={styles.dividerText}>OR</Text>
-                                            <View style={styles.dividerLine} />
-                                        </View>
-                                        <TouchableOpacity 
-                                            style={[styles.submitAddressButton, { backgroundColor: primaryColor }]} 
-                                            onPress={handleManualAddressSubmit} 
-                                            disabled={isDetectingLocation || !manualAddress.trim()}
-                                        >
-                                            {isDetectingLocation ? <ActivityIndicator color="#fff" /> : <>
-                                                <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                                                <Text style={styles.submitAddressText}>Geocode Address Entry</Text>
-                                            </>}
-                                        </TouchableOpacity>
-                                    </>
-                                )}
+                                            {method === 'auto' ? 'Auto Detect' : 'Enter Manually'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
                             </View>
-                        )}
 
-                        <View style={styles.modalFooter}>
-                            <TouchableOpacity style={styles.cancelButton} onPress={() => setShowLocationModal(false)}>
-                                <Text style={styles.cancelButtonText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity 
-                                style={[
-                                    styles.confirmButton, 
-                                    { backgroundColor: primaryColor },
-                                    !tempMarkerLocation && styles.confirmButtonDisabled
-                                ]} 
-                                onPress={confirmLocation} 
-                                disabled={!tempMarkerLocation}
+                            <ScrollView
+                                style={styles.locationModalBody}
+                                contentContainerStyle={styles.locationModalBodyContent}
+                                keyboardShouldPersistTaps="handled"
+                                showsVerticalScrollIndicator={false}
                             >
-                                <Text style={styles.confirmButtonText}>Confirm Location</Text>
-                            </TouchableOpacity>
+                                {locationMethod === 'auto'
+                                    ? renderAutoLocation()
+                                    : renderManualLocation()}
+                            </ScrollView>
+
+                            <View style={styles.modalFooter}>
+                                <TouchableOpacity
+                                    style={styles.cancelButton}
+                                    onPress={() => setShowLocationModal(false)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.confirmButton,
+                                        { backgroundColor: primaryColor },
+                                        !tempMarkerLocation && styles.confirmButtonDisabled,
+                                    ]}
+                                    onPress={confirmLocation}
+                                    disabled={!tempMarkerLocation}
+                                    activeOpacity={0.85}
+                                >
+                                    <Text style={styles.confirmButtonText}>Confirm Location</Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
-                    </View>
-                </TouchableWithoutFeedback>
+                    </TouchableWithoutFeedback>
+                </SafeAreaView>
             </Modal>
         );
     };
+
+    const renderAutoLocation = () => {
+        if (!tempMarkerLocation) {
+            return (
+                <View style={styles.detectContainer}>
+                    <View
+                        style={[
+                            styles.detectIconContainer,
+                            { backgroundColor: hexToRgba(primaryColor, 0.08) },
+                        ]}
+                    >
+                        <Ionicons name="locate" size={48} color={primaryColor} />
+                    </View>
+                    <Text style={styles.detectTitle}>Detect Your Location</Text>
+                    <Text style={styles.detectSubtitle}>
+                        We&apos;ll use your GPS to find your current location
+                    </Text>
+                    <TouchableOpacity
+                        style={[styles.detectButton, { backgroundColor: primaryColor }]}
+                        onPress={detectCurrentLocation}
+                        disabled={isDetectingLocation}
+                        activeOpacity={0.85}
+                    >
+                        {isDetectingLocation ? (
+                            <ActivityIndicator color="#fff" size="small" />
+                        ) : (
+                            <>
+                                <Ionicons name="location-sharp" size={20} color="#fff" />
+                                <Text style={styles.detectButtonText}>Detect Location</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.mapContainer}>
+                <MapView
+                    ref={mapRef}
+                    provider={PROVIDER_GOOGLE}
+                    style={styles.map}
+                    initialRegion={{
+                        latitude: tempMarkerLocation.latitude,
+                        longitude: tempMarkerLocation.longitude,
+                        latitudeDelta: 0.01,
+                        longitudeDelta: 0.01,
+                    }}
+                    showsUserLocation={true}
+                    showsMyLocationButton={false}
+                >
+                    <Marker
+                        coordinate={tempMarkerLocation}
+                        draggable
+                        onDragEnd={(e) => {
+                            const coords = e.nativeEvent.coordinate;
+                            setTempMarkerLocation(coords);
+                            setSelectedLocation(coords);
+                            Location.reverseGeocodeAsync(coords).then((result) => {
+                                if (result.length > 0) {
+                                    const { name: locName, street, city, country } = result[0];
+                                    const addr = `${locName || street || ''}, ${city || ''}, ${country || ''}`
+                                        .replace(/^,\s*|,\s*$/, '');
+                                    setLocationAddress(addr);
+                                    setManualAddress(addr);
+                                }
+                            });
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                    >
+                        <View style={styles.markerContainer}>
+                            <View style={[styles.markerPulse, { backgroundColor: hexToRgba(primaryColor, 0.2) }]} />
+                            <View style={[styles.markerPin, { backgroundColor: primaryColor }]}>
+                                <Ionicons name="location" size={24} color="#fff" />
+                            </View>
+                        </View>
+                    </Marker>
+                </MapView>
+                <View style={styles.mapAddressContainer}>
+                    <Ionicons name="location-sharp" size={18} color={primaryColor} />
+                    <Text style={styles.mapAddressText} numberOfLines={2}>
+                        {locationAddress || 'Drag pin to set location'}
+                    </Text>
+                </View>
+                <TouchableOpacity
+                    style={[styles.recenterButton, { borderColor: primaryColor }]}
+                    onPress={detectCurrentLocation}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                    <Ionicons name="locate" size={20} color={primaryColor} />
+                </TouchableOpacity>
+            </View>
+        );
+    };
+
+    const renderManualLocation = () => {
+        return (
+            <View style={styles.manualLocationContainer}>
+                {/* Search input */}
+                <View style={styles.searchInputWrapper}>
+                    <View
+                        style={[
+                            styles.searchInputContainer,
+                            { borderColor: hexToRgba(primaryColor, 0.3) },
+                        ]}
+                    >
+                        <Feather name="search" size={20} color="#94a3b8" />
+                        <TextInput
+                            style={styles.searchAddressInput}
+                            placeholder="Search for a location..."
+                            placeholderTextColor="#94a3b8"
+                            value={searchQuery}
+                            onChangeText={(text) => {
+                                setSearchQuery(text);
+                                searchAddress(text);
+                            }}
+                            returnKeyType="search"
+                        />
+                        {searchQuery.length > 0 && (
+                            <TouchableOpacity
+                                onPress={() => {
+                                    setSearchQuery('');
+                                    setSearchResults([]);
+                                }}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                                <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {isSearchingAddress && (
+                        <View style={styles.searchingContainer}>
+                            <ActivityIndicator size="small" color={primaryColor} />
+                            <Text style={styles.searchingText}>Searching...</Text>
+                        </View>
+                    )}
+
+                    {searchResults.length > 0 && (
+                        <View style={styles.searchResultsContainer}>
+                            {searchResults.map((result, index) => (
+                                <TouchableOpacity
+                                    key={index}
+                                    style={styles.searchResultItem}
+                                    onPress={() => handleSelectSearchResult(result)}
+                                    activeOpacity={0.7}
+                                >
+                                    <View
+                                        style={[
+                                            styles.searchResultIcon,
+                                            { backgroundColor: hexToRgba(primaryColor, 0.08) },
+                                        ]}
+                                    >
+                                        <Ionicons
+                                            name="location-outline"
+                                            size={18}
+                                            color={primaryColor}
+                                        />
+                                    </View>
+                                    <View style={styles.searchResultTextContainer}>
+                                        <Text style={styles.searchResultTitle} numberOfLines={1}>
+                                            {result.display_name.split(',')[0]}
+                                        </Text>
+                                        <Text style={styles.searchResultSubtitle} numberOfLines={2}>
+                                            {result.display_name}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
+                </View>
+
+                {/* Manual address text input — THIS WAS MISSING */}
+                <View style={styles.manualInputWrapper}>
+                    <Text style={styles.manualInputLabel}>Or type your address</Text>
+                    <View
+                        style={[
+                            styles.manualInputContainer,
+                            { borderColor: hexToRgba(primaryColor, 0.3) },
+                        ]}
+                    >
+                        <Ionicons name="create-outline" size={18} color="#94a3b8" />
+                        <TextInput
+                            style={styles.manualAddressInput}
+                            placeholder="e.g. Lazimpat, Kathmandu"
+                            placeholderTextColor="#94a3b8"
+                            value={manualAddress}
+                            onChangeText={setManualAddress}
+                            returnKeyType="done"
+                            onSubmitEditing={handleManualAddressSubmit}
+                        />
+                    </View>
+                    <TouchableOpacity
+                        style={[
+                            styles.geocodeButton,
+                            { backgroundColor: primaryColor },
+                            (isDetectingLocation || !manualAddress.trim()) &&
+                                styles.geocodeButtonDisabled,
+                        ]}
+                        onPress={handleManualAddressSubmit}
+                        disabled={isDetectingLocation || !manualAddress.trim()}
+                        activeOpacity={0.85}
+                    >
+                        {isDetectingLocation ? (
+                            <ActivityIndicator color="#fff" size="small" />
+                        ) : (
+                            <>
+                                <MaterialIcons name="my-location" size={18} color="#fff" />
+                                <Text style={styles.geocodeButtonText}>Find on Map</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+                </View>
+
+                {/* Preview map when location is selected */}
+                {tempMarkerLocation && (
+                    <View
+                        style={[
+                            styles.previewMapContainer,
+                            { borderColor: hexToRgba(primaryColor, 0.2) },
+                        ]}
+                    >
+                        <View style={styles.previewMapHeader}>
+                            <Text style={styles.previewMapTitle}>Selected Location</Text>
+                            <TouchableOpacity
+                                onPress={() => {
+                                    setTempMarkerLocation(null);
+                                    setSelectedLocation(null);
+                                }}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                                <Ionicons name="refresh" size={20} color={primaryColor} />
+                            </TouchableOpacity>
+                        </View>
+                        <MapView
+                            style={styles.previewMap}
+                            provider={PROVIDER_GOOGLE}
+                            region={{
+                                latitude: tempMarkerLocation.latitude,
+                                longitude: tempMarkerLocation.longitude,
+                                latitudeDelta: 0.01,
+                                longitudeDelta: 0.01,
+                            }}
+                            scrollEnabled={false}
+                            zoomEnabled={false}
+                        >
+                            <Marker coordinate={tempMarkerLocation}>
+                                <View
+                                    style={[
+                                        styles.markerPin,
+                                        { backgroundColor: primaryColor, width: 32, height: 32 },
+                                    ]}
+                                >
+                                    <Ionicons name="location" size={16} color="#fff" />
+                                </View>
+                            </Marker>
+                        </MapView>
+                        <View style={styles.previewAddressContainer}>
+                            <Ionicons name="location-sharp" size={16} color={primaryColor} />
+                            <Text style={styles.previewAddressText} numberOfLines={2}>
+                                {locationAddress}
+                            </Text>
+                        </View>
+                    </View>
+                )}
+            </View>
+        );
+    };
+
+    // ============================================
+    // RENDER: SUCCESS MODAL
+    // ============================================
 
     const renderSuccessModal = () => {
         return (
@@ -908,103 +1234,97 @@ const handleConfirmBooking = async () => {
                 onRequestClose={() => setSuccessModalVisible(false)}
             >
                 <View style={styles.successOverlay}>
-                    <TouchableWithoutFeedback onPress={() => {}}>
-                        <Animated.View style={[
+                    <TouchableWithoutFeedback onPress={() => setSuccessModalVisible(false)}>
+                        <View style={styles.successOverlayTapArea} />
+                    </TouchableWithoutFeedback>
+
+                    <Animated.View
+                        style={[
                             styles.successContainer,
                             {
                                 transform: [{ scale: scaleAnim }],
                                 opacity: scaleAnim,
-                            }
-                        ]}>
-                            {/* Success Icon */}
-                            <View style={styles.successIconContainer}>
-                                <LinearGradient
-                                    colors={['#10b981', '#059669']}
-                                    style={styles.successCircle}
+                            },
+                        ]}
+                    >
+                        {/* Success icon */}
+                        <View style={styles.successIconContainer}>
+                            <LinearGradient
+                                colors={['#10b981', '#059669']}
+                                style={styles.successCircle}
+                            >
+                                <Animated.View
+                                    style={{
+                                        transform: [
+                                            {
+                                                scale: checkAnim.interpolate({
+                                                    inputRange: [0, 0.5, 1],
+                                                    outputRange: [0, 1.2, 1],
+                                                }),
+                                            },
+                                        ],
+                                    }}
                                 >
-                                    <Animated.View
-                                        style={{
-                                            transform: [
-                                                {
-                                                    scale: checkAnim.interpolate({
-                                                        inputRange: [0, 0.5, 1],
-                                                        outputRange: [0, 1.2, 1],
-                                                    })
-                                                }
-                                            ]
-                                        }}
-                                    >
-                                        <Ionicons name="checkmark" size={60} color="#fff" />
-                                    </Animated.View>
-                                </LinearGradient>
-                            </View>
+                                    <Ionicons name="checkmark" size={60} color="#fff" />
+                                </Animated.View>
+                            </LinearGradient>
+                        </View>
 
-                            {/* Success Text */}
-                            <Animated.View style={{ opacity: fadeAnim }}>
-                                <Text style={styles.successTitle}>Booking Confirmed! 🎉</Text>
+                        {/* Success text */}
+                        <Animated.View style={{ opacity: fadeAnim }}>
+                            <Text style={styles.successTitle}>Booking Confirmed!</Text>
+                            <Animated.View
+                                style={{
+                                    transform: [{ translateY: slideAnim }],
+                                }}
+                            >
                                 <Text style={styles.successSubtitle}>
-                                    Your service request has been submitted successfully
+                                    {bookingData?.serviceName || 'Your service'} has been booked
+                                    successfully.
                                 </Text>
-                            </Animated.View>
-
-                            {/* Booking Details */}
-                            <Animated.View style={[
-                                styles.successDetails,
-                                {
-                                    opacity: fadeAnim,
-                                    transform: [{ translateY: slideAnim }]
-                                }
-                            ]}>
-                                <View style={styles.detailRow}>
-                                    <Text style={styles.detailLabel}>Service</Text>
-                                    <Text style={styles.detailValue}>{bookingData?.serviceName}</Text>
-                                </View>
-                                <View style={styles.detailDivider} />
-                                <View style={styles.detailRow}>
-                                    <Text style={styles.detailLabel}>Request ID</Text>
-                                    <Text style={[styles.detailValue, styles.detailCode]}>
-                                        #{bookingData?.requestId}
-                                    </Text>
-                                </View>
-                                <View style={styles.detailDivider} />
-                                <View style={styles.detailRow}>
-                                    <Text style={styles.detailLabel}>Status</Text>
-                                    <View style={[styles.statusBadge, { backgroundColor: primaryLight }]}>
-                                        <View style={[styles.statusDot, { backgroundColor: primaryColor }]} />
-                                        <Text style={[styles.statusText, { color: primaryColor }]}>Pending Approval</Text>
+                                {bookingData?.requestId && (
+                                    <View style={styles.requestIdContainer}>
+                                        <Text style={styles.requestIdLabel}>Request ID</Text>
+                                        <Text style={styles.requestIdValue}>
+                                            {bookingData.requestId}
+                                        </Text>
                                     </View>
-                                </View>
-                            </Animated.View>
-
-                            {/* Action Buttons */}
-                            <Animated.View style={[
-                                styles.successActions,
-                                {
-                                    opacity: fadeAnim,
-                                    transform: [{ translateY: slideAnim }]
-                                }
-                            ]}>
-                                <TouchableOpacity
-                                    style={[styles.successButton, styles.successButtonPrimary, { backgroundColor: primaryColor }]}
-                                    onPress={() => handleSuccessAction('status')}
-                                >
-                                    <Text style={styles.successButtonText}>Track Status</Text>
-                                    <Ionicons name="arrow-forward" size={20} color="#fff" />
-                                </TouchableOpacity>
-                                
-                                <TouchableOpacity
-                                    style={[styles.successButton, styles.successButtonSecondary]}
-                                    onPress={() => handleSuccessAction('home')}
-                                >
-                                    <Text style={[styles.successButtonText, { color: primaryColor }]}>Back to Home</Text>
-                                </TouchableOpacity>
+                                )}
                             </Animated.View>
                         </Animated.View>
-                    </TouchableWithoutFeedback>
+
+                        {/* Actions */}
+                        <Animated.View
+                            style={[
+                                styles.successActions,
+                                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+                            ]}
+                        >
+                            <TouchableOpacity
+                                style={styles.successHomeButton}
+                                onPress={() => handleSuccessAction('home')}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={styles.successHomeButtonText}>Go Home</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.successTrackButton, { backgroundColor: primaryColor }]}
+                                onPress={() => handleSuccessAction('status')}
+                                activeOpacity={0.85}
+                            >
+                                <Ionicons name="navigate" size={18} color="#fff" />
+                                <Text style={styles.successTrackButtonText}>Track Status</Text>
+                            </TouchableOpacity>
+                        </Animated.View>
+                    </Animated.View>
                 </View>
             </Modal>
         );
     };
+
+    // ============================================
+    // MAIN RENDER
+    // ============================================
 
     if (loading) {
         return (
@@ -1016,25 +1336,40 @@ const handleConfirmBooking = async () => {
     }
 
     return (
-        <>
-            <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+            <ScrollView
+                style={styles.scrollView}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scrollContent}
+            >
                 {renderServiceDetails()}
-                <View style={styles.footerSpacer} />
             </ScrollView>
-            
+
             {renderFooter()}
             {renderBookingModal()}
             {renderLocationModal()}
             {renderSuccessModal()}
-        </>
+        </SafeAreaView>
     );
 }
 
+// ============================================
+// STYLES
+// ============================================
+
 const styles = StyleSheet.create({
-    container: {
+    safeArea: {
         flex: 1,
         backgroundColor: '#f8fafc',
     },
+    scrollView: {
+        flex: 1,
+    },
+    scrollContent: {
+        paddingBottom: 100, // space for fixed footer
+    },
+
+    // ---- Loading ----
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -1046,12 +1381,12 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#64748b',
     },
-    footerSpacer: {
-        height: 100,
-    },
+
+    // ---- Hero image ----
     imageContainer: {
         position: 'relative',
-        height: 280,
+        height: 220,
+        backgroundColor: '#e2e8f0',
     },
     heroImage: {
         width: '100%',
@@ -1064,64 +1399,84 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     heroInitials: {
-        fontSize: 64,
-        fontWeight: '700',
-        color: '#ffffff',
-        textAlign: 'center',
+        fontSize: 56,
+        fontWeight: '800',
+        color: 'rgba(255,255,255,0.85)',
+    },
+    imageGradientOverlay: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: '50%',
     },
     priceBadge: {
         position: 'absolute',
         bottom: 16,
-        right: 16,
-        paddingHorizontal: 16,
+        left: 16,
+        paddingHorizontal: 14,
         paddingVertical: 8,
-        borderRadius: 30,
+        borderRadius: 12,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
     },
     priceBadgeText: {
-        color: '#fff',
+        color: '#ffffff',
         fontSize: 18,
         fontWeight: '700',
     },
+
+    // ---- Info section ----
     infoContainer: {
-        padding: 20,
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        marginTop: -20,
+        position: 'relative',
+        zIndex: 2,
+    },
+    categoryChip: {
+        alignSelf: 'flex-start',
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 8,
+        marginBottom: 8,
     },
     serviceName: {
-        fontSize: 24,
+        fontSize: 22,
         fontWeight: '700',
         color: '#0f172a',
-        marginBottom: 8,
         letterSpacing: -0.5,
+        marginBottom: 4,
     },
-    ratingContainer: {
+    durationRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 16,
-        gap: 8,
+        gap: 6,
+        marginBottom: 8,
     },
-    stars: {
-        flexDirection: 'row',
-    },
-    ratingText: {
+    durationText: {
         fontSize: 13,
         color: '#64748b',
+        fontWeight: '500',
     },
     section: {
         marginTop: 20,
     },
     sectionTitle: {
-        fontSize: 18,
-        fontWeight: '600',
+        fontSize: 16,
+        fontWeight: '700',
         color: '#0f172a',
-        marginBottom: 12,
+        marginBottom: 10,
     },
     descriptionText: {
         fontSize: 14,
-        color: '#64748b',
+        color: '#475569',
         lineHeight: 22,
     },
     featuresList: {
@@ -1134,31 +1489,37 @@ const styles = StyleSheet.create({
     },
     featureText: {
         fontSize: 14,
-        color: '#334155',
+        color: '#475569',
+        fontWeight: '500',
     },
+
+    // ---- Location card ----
     locationCard: {
         flexDirection: 'row',
         alignItems: 'center',
+        padding: 14,
+        borderRadius: 14,
+        borderWidth: 1.5,
         backgroundColor: '#ffffff',
-        padding: 16,
-        borderRadius: 16,
         gap: 12,
-        borderWidth: 1,
-        borderColor: '#f0f2f5',
     },
     locationIconContainer: {
         width: 44,
         height: 44,
-        borderRadius: 22,
+        borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
+        flexShrink: 0,
     },
     locationInfo: {
         flex: 1,
     },
     locationLabel: {
-        fontSize: 12,
+        fontSize: 11,
         color: '#94a3b8',
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
         marginBottom: 2,
     },
     locationAddress: {
@@ -1166,128 +1527,184 @@ const styles = StyleSheet.create({
         color: '#0f172a',
         fontWeight: '500',
     },
+    contentBottomSpacer: {
+        height: 20,
+    },
+
+    // ---- Fixed footer ----
     footer: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: 20,
         backgroundColor: '#ffffff',
         borderTopWidth: 1,
-        borderTopColor: '#f0f2f5',
+        borderTopColor: '#f1f5f9',
+        paddingHorizontal: 16,
+        paddingTop: 12,
+        paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: -4 },
         shadowOpacity: 0.05,
         shadowRadius: 8,
-        elevation: 4,
+        elevation: 8,
     },
     priceContainer: {
-        flex: 1,
+        flexShrink: 0,
     },
     priceLabel: {
-        fontSize: 12,
+        fontSize: 11,
         color: '#94a3b8',
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
     },
     priceAmount: {
-        fontSize: 24,
-        fontWeight: '700',
+        fontSize: 18,
+        fontWeight: '800',
     },
-    bookButton: {
-        paddingHorizontal: 24,
-        paddingVertical: 14,
-        borderRadius: 30,
+    buttonGroup: {
+        flex: 1,
+        flexDirection: 'row',
+        gap: 10,
+    },
+    addButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        justifyContent: 'center',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderRadius: 14,
+        borderWidth: 1.5,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+        gap: 6,
+    },
+    addedButton: {
+        borderWidth: 1.5,
+    },
+    addButtonText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#64748b',
+    },
+    bookButton: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 12,
+        borderRadius: 14,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
+        shadowOpacity: 0.15,
         shadowRadius: 8,
         elevation: 4,
     },
     bookButtonText: {
-        color: '#fff',
-        fontSize: 16,
-        fontWeight: '600',
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '700',
     },
+
+    // ---- Booking modal ----
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        backgroundColor: 'rgba(0,0,0,0.4)',
         justifyContent: 'flex-end',
+    },
+    modalOverlayTapArea: {
+        flex: 1,
     },
     modalContent: {
         backgroundColor: '#ffffff',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
-        maxHeight: '90%',
+        maxHeight: '85%',
+    },
+    modalHandleBar: {
+        width: 40,
+        height: 4,
+        backgroundColor: '#e2e8f0',
+        borderRadius: 2,
+        alignSelf: 'center',
+        marginTop: 12,
+        marginBottom: 4,
     },
     modalHeader: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        padding: 20,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f2f5',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
     },
     modalTitle: {
-        fontSize: 20,
-        fontWeight: '600',
+        fontSize: 18,
+        fontWeight: '700',
         color: '#0f172a',
     },
     modalBody: {
-        padding: 20,
+        paddingHorizontal: 20,
     },
     modalFooter: {
         flexDirection: 'row',
         gap: 12,
-        padding: 20,
+        paddingHorizontal: 20,
+        paddingVertical: 16,
         borderTopWidth: 1,
-        borderTopColor: '#f0f2f5',
+        borderTopColor: '#f1f5f9',
     },
     serviceSummary: {
-        backgroundColor: '#f8fafc',
-        padding: 16,
-        borderRadius: 12,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
         marginBottom: 16,
-        alignItems: 'center',
+    },
+    serviceSummaryInfo: {
+        flex: 1,
+        marginRight: 12,
     },
     summaryServiceName: {
         fontSize: 16,
         fontWeight: '600',
         color: '#0f172a',
-        marginBottom: 4,
+    },
+    summaryCategory: {
+        fontSize: 13,
+        color: '#64748b',
+        marginTop: 2,
     },
     summaryPrice: {
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: '700',
+        flexShrink: 0,
     },
     locationSummary: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
+        gap: 10,
         padding: 12,
         borderRadius: 12,
-        marginBottom: 16,
-        gap: 8,
         borderWidth: 1,
-        borderColor: '#f0f2f5',
+        backgroundColor: '#f8fafc',
+        marginBottom: 16,
     },
     locationSummaryText: {
         flex: 1,
-        fontSize: 14,
-        color: '#64748b',
+        fontSize: 13,
+        color: '#475569',
     },
     priceBreakdown: {
-        marginTop: 8,
-        paddingTop: 8,
+        backgroundColor: '#f8fafc',
+        borderRadius: 14,
+        padding: 16,
+        marginBottom: 8,
     },
     breakdownRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginBottom: 8,
     },
     breakdownLabel: {
         fontSize: 14,
@@ -1296,61 +1713,75 @@ const styles = StyleSheet.create({
     breakdownValue: {
         fontSize: 14,
         color: '#0f172a',
+        fontWeight: '500',
     },
     breakdownDivider: {
         height: 1,
-        backgroundColor: '#f0f2f5',
+        backgroundColor: '#e2e8f0',
         marginVertical: 12,
     },
     breakdownTotal: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
     },
     totalLabel: {
-        fontSize: 16,
+        fontSize: 15,
         fontWeight: '600',
         color: '#0f172a',
     },
     totalAmount: {
-        fontSize: 20,
+        fontSize: 15,
         fontWeight: '700',
     },
     paymentNote: {
-        fontSize: 12,
+        fontSize: 11,
         color: '#94a3b8',
-        textAlign: 'center',
         marginTop: 12,
+        lineHeight: 16,
     },
     cancelButton: {
         flex: 1,
-        paddingVertical: 12,
-        borderRadius: 12,
         alignItems: 'center',
-        backgroundColor: '#f1f5f9',
+        justifyContent: 'center',
+        paddingVertical: 13,
+        borderRadius: 14,
+        borderWidth: 1.5,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
     },
     cancelButtonText: {
-        fontSize: 16,
-        fontWeight: '500',
+        fontSize: 14,
+        fontWeight: '600',
         color: '#64748b',
     },
     confirmButton: {
-        flex: 2,
-        paddingVertical: 12,
-        borderRadius: 12,
+        flex: 1.5,
         alignItems: 'center',
-    },
-    confirmButtonText: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#fff',
+        justifyContent: 'center',
+        paddingVertical: 13,
+        borderRadius: 14,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 8,
+        elevation: 3,
     },
     confirmButtonDisabled: {
-        backgroundColor: '#cbd5e1',
+        opacity: 0.5,
+    },
+    confirmButtonText: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+
+    // ---- Location modal ----
+    locationModalSafeArea: {
+        flex: 1,
+        backgroundColor: '#f8fafc',
     },
     modalContainer: {
         flex: 1,
-        backgroundColor: '#ffffff',
     },
     modalCloseButton: {
         width: 40,
@@ -1360,9 +1791,12 @@ const styles = StyleSheet.create({
     },
     methodSelector: {
         flexDirection: 'row',
-        paddingHorizontal: 20,
-        paddingBottom: 10,
-        gap: 12,
+        marginHorizontal: 20,
+        backgroundColor: '#ffffff',
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        padding: 4,
     },
     methodButton: {
         flex: 1,
@@ -1370,92 +1804,96 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 8,
-        paddingVertical: 12,
-        borderRadius: 12,
-        backgroundColor: '#f8fafc',
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
+        paddingVertical: 10,
+        borderRadius: 10,
     },
     methodButtonActive: {
-        backgroundColor: '#fef3e8',
-        borderColor: '#e67e22',
+        backgroundColor: '#f8fafc',
+        borderWidth: 1.5,
     },
     methodText: {
-        fontSize: 14,
-        fontWeight: '500',
+        fontSize: 13,
         color: '#64748b',
+        fontWeight: '500',
     },
-    methodTextActive: {
-        color: '#e67e22',
-    },
-    autoLocationContainer: {
+    locationModalBody: {
         flex: 1,
+        marginTop: 16,
+    },
+    locationModalBodyContent: {
         paddingHorizontal: 20,
+        paddingBottom: 16,
     },
+
+    // ---- Auto location ----
     detectContainer: {
-        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 20,
+        paddingVertical: 40,
+    },
+    detectIconContainer: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
     },
     detectTitle: {
-        fontSize: 20,
-        fontWeight: '600',
+        fontSize: 18,
+        fontWeight: '700',
         color: '#0f172a',
-        marginTop: 16,
-        marginBottom: 8,
+        marginBottom: 6,
     },
     detectSubtitle: {
         fontSize: 14,
         color: '#64748b',
         textAlign: 'center',
+        lineHeight: 20,
         marginBottom: 24,
+        paddingHorizontal: 20,
     },
     detectButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: 10,
         paddingHorizontal: 24,
-        paddingVertical: 12,
-        borderRadius: 30,
+        paddingVertical: 14,
+        borderRadius: 14,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 4,
     },
     detectButtonText: {
-        color: '#fff',
-        fontSize: 16,
+        color: '#ffffff',
+        fontSize: 15,
         fontWeight: '600',
     },
+
+    // ---- Map ----
     mapContainer: {
-        flex: 1,
+        height: 320,
         borderRadius: 16,
         overflow: 'hidden',
         position: 'relative',
-        marginBottom: 10,
     },
     map: {
-        flex: 1,
+        width: '100%',
+        height: '100%',
     },
-    mapAddressContainer: {
-        position: 'absolute',
-        bottom: 20,
-        left: 20,
-        right: 20,
-        backgroundColor: 'rgba(255,255,255,0.95)',
-        padding: 12,
-        borderRadius: 12,
-        flexDirection: 'row',
+    markerContainer: {
         alignItems: 'center',
-        gap: 8,
+        justifyContent: 'center',
     },
-    mapAddressText: {
-        flex: 1,
-        fontSize: 13,
-        color: '#0f172a',
-    },
-    recenterButton: {
+    markerPulse: {
         position: 'absolute',
-        top: 20,
-        right: 20,
-        backgroundColor: '#fff',
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+    },
+    markerPin: {
         width: 40,
         height: 40,
         borderRadius: 20,
@@ -1463,59 +1901,107 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 4,
+    },
+    mapAddressContainer: {
+        position: 'absolute',
+        bottom: 12,
+        left: 12,
+        right: 60,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        padding: 10,
+        borderRadius: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 6,
+        elevation: 3,
+    },
+    mapAddressText: {
+        flex: 1,
+        fontSize: 12,
+        color: '#0f172a',
+        fontWeight: '500',
+    },
+    recenterButton: {
+        position: 'absolute',
+        bottom: 12,
+        right: 12,
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        backgroundColor: '#ffffff',
+        borderWidth: 1.5,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
         elevation: 3,
-        borderWidth: 1,
     },
+
+    // ---- Manual location ----
     manualLocationContainer: {
-        flex: 1,
-        paddingHorizontal: 20,
+        gap: 16,
     },
     searchInputWrapper: {
-        marginBottom: 10,
-        zIndex: 10,
+        gap: 0,
     },
     searchInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
-        borderRadius: 16,
-        paddingHorizontal: 16,
-        height: 50,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+        borderRadius: 14,
+        borderWidth: 1.5,
+        paddingHorizontal: 14,
+        height: 48,
         gap: 10,
     },
     searchAddressInput: {
         flex: 1,
-        fontSize: 16,
-        color: '#0f172a',
+        fontSize: 14,
+        color: '#1e293b',
         paddingVertical: 0,
+    },
+    searchingContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+    },
+    searchingText: {
+        fontSize: 13,
+        color: '#64748b',
     },
     searchResultsContainer: {
         backgroundColor: '#ffffff',
-        borderRadius: 12,
-        marginTop: 8,
-        maxHeight: 200,
+        borderRadius: 14,
         borderWidth: 1,
         borderColor: '#e2e8f0',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
-    },
-    searchResultsScroll: {
-        maxHeight: 200,
+        overflow: 'hidden',
     },
     searchResultItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f2f5',
         gap: 12,
+        padding: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f1f5f9',
+    },
+    searchResultIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+        flexShrink: 0,
     },
     searchResultTextContainer: {
         flex: 1,
@@ -1524,39 +2010,74 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: '#0f172a',
+        marginBottom: 2,
     },
     searchResultSubtitle: {
         fontSize: 12,
         color: '#64748b',
-        marginTop: 2,
+        lineHeight: 16,
     },
-    searchingContainer: {
+
+    // ---- Manual address input (was missing) ----
+    manualInputWrapper: {
+        gap: 10,
+    },
+    manualInputLabel: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#475569',
+        marginBottom: 2,
+    },
+    manualInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#ffffff',
+        borderRadius: 14,
+        borderWidth: 1.5,
+        paddingHorizontal: 14,
+        height: 48,
+        gap: 10,
+    },
+    manualAddressInput: {
+        flex: 1,
+        fontSize: 14,
+        color: '#1e293b',
+        paddingVertical: 0,
+    },
+    geocodeButton: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 20,
         gap: 8,
+        paddingVertical: 13,
+        borderRadius: 14,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 8,
+        elevation: 3,
     },
-    searchingText: {
+    geocodeButtonDisabled: {
+        opacity: 0.5,
+    },
+    geocodeButtonText: {
+        color: '#ffffff',
         fontSize: 14,
-        color: '#64748b',
+        fontWeight: '600',
     },
+
+    // ---- Preview map ----
     previewMapContainer: {
-        marginTop: 10,
         borderRadius: 16,
+        borderWidth: 1.5,
         overflow: 'hidden',
-        backgroundColor: '#f8fafc',
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
     },
     previewMapHeader: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
+        justifyContent: 'space-between',
         padding: 12,
-        backgroundColor: '#ffffff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f2f5',
     },
     previewMapTitle: {
         fontSize: 14,
@@ -1564,176 +2085,139 @@ const styles = StyleSheet.create({
         color: '#0f172a',
     },
     previewMap: {
-        height: 150,
+        height: 160,
         width: '100%',
     },
     previewAddressContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 12,
-        backgroundColor: '#ffffff',
         gap: 8,
+        padding: 12,
         borderTopWidth: 1,
-        borderTopColor: '#f0f2f5',
+        borderTopColor: '#f1f5f9',
     },
     previewAddressText: {
         flex: 1,
-        fontSize: 12,
-        color: '#64748b',
+        fontSize: 13,
+        color: '#475569',
+        lineHeight: 18,
     },
-    orDivider: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginVertical: 15,
-    },
-    dividerLine: {
-        flex: 1,
-        height: 1,
-        backgroundColor: '#e2e8f0',
-    },
-    dividerText: {
-        marginHorizontal: 12,
-        color: '#94a3b8',
-        fontSize: 12,
-    },
-    submitAddressButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        paddingVertical: 14,
-        borderRadius: 12,
-    },
-    submitAddressText: {
-        color: '#fff',
-        fontSize: 16,
-        fontWeight: '600',
-    },
+
+    // ---- Success modal ----
     successOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
+        backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'center',
         alignItems: 'center',
-        padding: 20,
+    },
+    successOverlayTapArea: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
     },
     successContainer: {
         backgroundColor: '#ffffff',
-        borderRadius: 28,
+        borderRadius: 24,
         padding: 32,
-        width: '100%',
-        maxWidth: 400,
+        width: width * 0.85,
         alignItems: 'center',
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 20 },
-        shadowOpacity: 0.25,
-        shadowRadius: 30,
-        elevation: 10,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.15,
+        shadowRadius: 24,
+        elevation: 12,
     },
     successIconContainer: {
         marginBottom: 20,
     },
     successCircle: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
+        width: 96,
+        height: 96,
+        borderRadius: 48,
         justifyContent: 'center',
         alignItems: 'center',
         shadowColor: '#10b981',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
-        shadowRadius: 10,
-        elevation: 5,
+        shadowRadius: 12,
+        elevation: 6,
     },
     successTitle: {
-        fontSize: 24,
-        fontWeight: '700',
+        fontSize: 22,
+        fontWeight: '800',
         color: '#0f172a',
-        marginBottom: 8,
         textAlign: 'center',
+        marginBottom: 8,
     },
     successSubtitle: {
         fontSize: 14,
         color: '#64748b',
         textAlign: 'center',
-        marginBottom: 24,
         lineHeight: 20,
+        marginBottom: 12,
     },
-    successDetails: {
-        width: '100%',
+    requestIdContainer: {
         backgroundColor: '#f8fafc',
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 24,
-    },
-    detailRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 6,
-    },
-    detailLabel: {
-        fontSize: 13,
-        color: '#64748b',
-    },
-    detailValue: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#0f172a',
-    },
-    detailCode: {
-        color: '#0177b8',
-        fontFamily: 'monospace',
-        fontSize: 14,
-    },
-    detailDivider: {
-        height: 1,
-        backgroundColor: '#e2e8f0',
-        marginVertical: 6,
-    },
-    statusBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 4,
         borderRadius: 12,
+        padding: 12,
+        alignItems: 'center',
+        width: '100%',
+        marginBottom: 4,
     },
-    statusDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-    },
-    statusText: {
-        fontSize: 12,
+    requestIdLabel: {
+        fontSize: 11,
+        color: '#94a3b8',
         fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 2,
+    },
+    requestIdValue: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#0f172a',
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     },
     successActions: {
+        flexDirection: 'row',
         width: '100%',
         gap: 10,
+        marginTop: 24,
     },
-    successButton: {
+    successHomeButton: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 13,
+        borderRadius: 14,
+        borderWidth: 1.5,
+        borderColor: '#e2e8f0',
+        backgroundColor: '#ffffff',
+    },
+    successHomeButtonText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#64748b',
+    },
+    successTrackButton: {
+        flex: 1.5,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 14,
-        borderRadius: 14,
         gap: 8,
-    },
-    successButtonPrimary: {
+        paddingVertical: 13,
+        borderRadius: 14,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
+        shadowOpacity: 0.15,
         shadowRadius: 8,
         elevation: 4,
     },
-    successButtonSecondary: {
-        backgroundColor: '#f1f5f9',
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-    },
-    successButtonText: {
-        fontSize: 16,
-        fontWeight: '600',
+    successTrackButtonText: {
         color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '600',
     },
 });
