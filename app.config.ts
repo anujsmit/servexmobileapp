@@ -53,8 +53,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         compileSdkVersion: 35
     },
     plugins: [
-        "@rnmapbox/maps",
-        "react-native-document-scanner-plugin",
         [
             "expo-camera",
             {

@@ -23,7 +23,7 @@ export default function CustomerPersonalInfoScreen() {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch(`${API_BASE_URL}/api/auth/profile`, {
+        const response = await fetch(`${API_BASE_URL}/api/users/auth/profile`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -43,7 +43,7 @@ export default function CustomerPersonalInfoScreen() {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch(`${API_BASE_URL}/api/auth/request-phone-change`, {
+        const response = await fetch(`${API_BASE_URL}/api/users/auth/request-phone-change`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -62,7 +62,7 @@ export default function CustomerPersonalInfoScreen() {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch(`${API_BASE_URL}/api/auth/verify-phone-change`, {
+        const response = await fetch(`${API_BASE_URL}/users/auth/verify-phone-change`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

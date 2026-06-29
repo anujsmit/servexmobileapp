@@ -11,6 +11,7 @@ import {
     ActivityIndicator,
     RefreshControl,
     Dimensions,
+    Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
@@ -69,7 +70,6 @@ const SubCategoryCard = memo(({
             onPress={onPress}
             disabled={!hasItems}
         >
-            {/* Image Container */}
             <View style={styles.imageContainer}>
                 {subCategory.imageUrl ? (
                     <Image
@@ -85,20 +85,17 @@ const SubCategoryCard = memo(({
                     </View>
                 )}
                 
-                {/* Gradient Overlay for better text readability */}
                 <LinearGradient
                     colors={['transparent', 'rgba(0,0,0,0.15)']}
                     style={styles.imageGradient}
                 />
                 
-                {/* Popular Badge */}
                 {subCategory.isPopular && (
                     <View style={[styles.popularBadge, { backgroundColor: color }]}>
                         <Ionicons name="star" size={10} color="#fff" />
                     </View>
                 )}
                 
-                {/* Coming Soon Badge */}
                 {!hasItems && (
                     <View style={styles.comingSoonOverlay}>
                         <Text style={styles.comingSoonText}>Coming Soon</Text>
@@ -106,7 +103,6 @@ const SubCategoryCard = memo(({
                 )}
             </View>
 
-            {/* Card Content */}
             <View style={styles.cardContent}>
                 <Text style={styles.subCategoryName} numberOfLines={1}>
                     {subCategory.name}
@@ -138,6 +134,42 @@ const SubCategoryCard = memo(({
 });
 
 SubCategoryCard.displayName = 'SubCategoryCard';
+
+// ============================================
+// CONSULTATION BUTTON COMPONENT
+// ============================================
+
+const ConsultationButton = memo(({ onPress }: { onPress: () => void }) => {
+    return (
+        <TouchableOpacity 
+            style={styles.consultationButton}
+            activeOpacity={0.9}
+            onPress={onPress}
+        >
+            <LinearGradient
+                colors={['#f97316', '#e67e22']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.consultationGradient}
+            >
+                <View style={styles.consultationContent}>
+                    <View style={styles.consultationIconWrapper}>
+                        <Ionicons name="chatbubbles-outline" size={22} color="#fff" />
+                    </View>
+                    <View style={styles.consultationTextWrapper}>
+                        <Text style={styles.consultationTitle}>Book a Consultation</Text>
+                        <Text style={styles.consultationSubtitle}>Get expert advice instantly</Text>
+                    </View>
+                    <View style={styles.consultationArrow}>
+                        <Ionicons name="arrow-forward" size={20} color="#fff" />
+                    </View>
+                </View>
+            </LinearGradient>
+        </TouchableOpacity>
+    );
+});
+
+ConsultationButton.displayName = 'ConsultationButton';
 
 // ============================================
 // MAIN COMPONENT
@@ -211,6 +243,10 @@ export default function CategoryServicesScreen() {
         });
     };
 
+    const handleConsultationPress = () => {
+        router.push('/book/consultation');
+    };
+
     const getCategoryColor = () => categoryInfo?.iconColor || '#e67e22';
 
     const renderCategoryHeader = () => {
@@ -220,7 +256,6 @@ export default function CategoryServicesScreen() {
         
         return (
             <View style={styles.headerContainer}>
-                {/* Background Accent */}
                 <View style={[styles.headerAccent, { backgroundColor: color + '08' }]} />
                 
                 <View style={styles.headerContent}>
@@ -315,6 +350,11 @@ export default function CategoryServicesScreen() {
         >
             {renderCategoryHeader()}
 
+            {/* Consultation Button */}
+            <View style={styles.consultationSection}>
+                <ConsultationButton onPress={handleConsultationPress} />
+            </View>
+
             <View style={styles.subCategoriesSection}>
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>Sub-Categories</Text>
@@ -343,7 +383,7 @@ export default function CategoryServicesScreen() {
 }
 
 // ============================================
-// STYLES - ENHANCED WITH LARGER IMAGES
+// STYLES
 // ============================================
 
 const styles = StyleSheet.create({
@@ -367,15 +407,24 @@ const styles = StyleSheet.create({
         color: '#64748b',
     },
 
-    // ==========================================
-    // HEADER STYLES
-    // ==========================================
     headerContainer: {
         backgroundColor: '#ffffff',
         borderBottomLeftRadius: 28,
         borderBottomRightRadius: 28,
         overflow: 'hidden',
         position: 'relative',
+        marginHorizontal: 0,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#0f172a',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.06,
+                shadowRadius: 12,
+            },
+            android: {
+                elevation: 4,
+            },
+        }),
     },
     headerAccent: {
         position: 'absolute',
@@ -400,11 +449,17 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
-        shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.08,
-        shadowRadius: 16,
-        elevation: 4,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#0f172a',
+                shadowOffset: { width: 0, height: 6 },
+                shadowOpacity: 0.08,
+                shadowRadius: 16,
+            },
+            android: {
+                elevation: 4,
+            },
+        }),
         borderWidth: 2,
     },
     categoryIconFallback: {
@@ -460,9 +515,67 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
 
-    // ==========================================
-    // SECTION STYLES
-    // ==========================================
+    consultationSection: {
+        paddingHorizontal: 16,
+        paddingTop: 20,
+    },
+    consultationButton: {
+        borderRadius: 16,
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: {
+                shadowColor: '#f97316',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.2,
+                shadowRadius: 12,
+            },
+            android: {
+                elevation: 6,
+            },
+        }),
+    },
+    consultationGradient: {
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        borderRadius: 16,
+    },
+    consultationContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    consultationIconWrapper: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 14,
+    },
+    consultationTextWrapper: {
+        flex: 1,
+    },
+    consultationTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#ffffff',
+        letterSpacing: -0.2,
+    },
+    consultationSubtitle: {
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.85)',
+        marginTop: 2,
+    },
+    consultationArrow: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+
     subCategoriesSection: {
         paddingHorizontal: 16,
         paddingTop: 20,
@@ -501,9 +614,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
 
-    // ==========================================
-    // GRID STYLES
-    // ==========================================
     subCategoriesGrid: {
         gap: 14,
     },
@@ -513,20 +623,23 @@ const styles = StyleSheet.create({
         gap: 14,
     },
 
-    // ==========================================
-    // CARD STYLES - ENHANCED
-    // ==========================================
     subCategoryCard: {
         flex: 1,
         backgroundColor: '#ffffff',
         borderRadius: 20,
         borderWidth: 1,
         borderColor: '#f1f5f9',
-        shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        elevation: 3,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#0f172a',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.06,
+                shadowRadius: 12,
+            },
+            android: {
+                elevation: 3,
+            },
+        }),
         overflow: 'hidden',
         maxWidth: CARD_WIDTH,
     },
@@ -540,9 +653,6 @@ const styles = StyleSheet.create({
         opacity: 0.55,
     },
 
-    // ==========================================
-    // IMAGE STYLES - LARGER & BETTER
-    // ==========================================
     imageContainer: {
         width: '100%',
         height: 130,
@@ -579,11 +689,17 @@ const styles = StyleSheet.create({
         borderRadius: 13,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 3,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
+            },
+            android: {
+                elevation: 3,
+            },
+        }),
     },
     comingSoonOverlay: {
         position: 'absolute',
@@ -602,9 +718,6 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
 
-    // ==========================================
-    // CARD CONTENT STYLES
-    // ==========================================
     cardContent: {
         padding: 14,
     },
@@ -643,9 +756,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
 
-    // ==========================================
-    // EMPTY STATE STYLES
-    // ==========================================
     emptyContainer: {
         alignItems: 'center',
         justifyContent: 'center',

@@ -117,7 +117,7 @@ export default function AccountSettings() {
     const handleRequestAccountDeletion = async () => {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
-        const response = await fetch(`${API_BASE_URL}/api/auth/request-account-deletion`, {
+        const response = await fetch(`${API_BASE_URL}/api/mistri/auth/request-account-deletion`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         });
@@ -130,7 +130,7 @@ export default function AccountSettings() {
     const handleVerifyAccountDeletion = async (otp: string) => {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
-        const response = await fetch(`${API_BASE_URL}/api/auth/verify-account-deletion`, {
+        const response = await fetch(`${API_BASE_URL}/api/mistri/auth/verify-account-deletion`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ otp }),
@@ -147,7 +147,7 @@ export default function AccountSettings() {
     const handleRequestPhoneChange = async (newPhone: string) => {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
-        const response = await fetch(`${API_BASE_URL}/api/auth/request-phone-change`, {
+        const response = await fetch(`${API_BASE_URL}/api/mistri/auth/request-phone-change`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ newPhoneNumber: newPhone }),
@@ -161,7 +161,7 @@ export default function AccountSettings() {
     const handleVerifyPhoneChange = async (newPhone: string, otp: string) => {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
-        const response = await fetch(`${API_BASE_URL}/api/auth/verify-phone-change`, {
+        const response = await fetch(`${API_BASE_URL}/api/mistri/auth/verify-phone-change`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ newPhoneNumber: newPhone, otp }),

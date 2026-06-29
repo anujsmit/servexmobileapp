@@ -37,7 +37,7 @@ const fetchCart = async (): Promise<Cart> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
 
-    const response = await fetch(`${API_BASE_URL}/api/cart`, {
+    const response = await fetch(`${API_BASE_URL}/api/users/cart`, {
         headers: {
             'Authorization': `Bearer ${token}`,
         },
@@ -66,7 +66,7 @@ const addToCartApi = async (serviceItemId: string, quantity: number = 1) => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
 
-    const response = await fetch(`${API_BASE_URL}/api/cart/add`, {
+    const response = await fetch(`${API_BASE_URL}/api/users/cart/add`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -100,7 +100,7 @@ const updateCartItemApi = async (itemId: string, quantity: number) => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
 
-    const response = await fetch(`${API_BASE_URL}/api/cart/items/${itemId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/users/cart/items/${itemId}`, {
         method: 'PATCH',
         headers: {
             'Content-Type': 'application/json',
@@ -134,7 +134,7 @@ const removeFromCartApi = async (itemId: string) => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
 
-    const response = await fetch(`${API_BASE_URL}/api/cart/items/${itemId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/users/cart/items/${itemId}`, {
         method: 'DELETE',
         headers: {
             'Authorization': `Bearer ${token}`,

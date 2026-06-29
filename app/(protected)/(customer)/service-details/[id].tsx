@@ -428,80 +428,91 @@ export default function ServiceDetailsScreen() {
         setBookingModalVisible(true);
     };
 
-    const handleConfirmBooking = async () => {
-        setSubmitting(true);
-        try {
-            let serviceType =
-                (categoryName as string) ||
-                service?.categoryName ||
-                service?.name ||
-                (id as string);
-            serviceType = serviceType.replace(/\s*Service\s*/gi, '').trim();
+// app/(protected)/(customer)/service-details/[id].tsx
 
-            const serviceTypeMap: Record<string, string> = {
-                plumber: 'plumber',
-                Plumber: 'plumber',
-                electrician: 'electrician',
-                Electrician: 'electrician',
-                painter: 'painter',
-                Painter: 'painter',
-                carpenter: 'carpenter',
-                Carpenter: 'carpenter',
-                cleaning: 'cleaning',
-                Cleaning: 'cleaning',
-                plumbing: 'plumber',
-                Plumbing: 'plumber',
-                electrical: 'electrician',
-                Electrical: 'electrician',
-                tap: 'plumber',
-                pipe: 'plumber',
-            };
+// ============================================
+// CART & BOOKING ACTIONS - FIXED
+// ============================================
 
-            const finalServiceType =
-                serviceTypeMap[serviceType] || serviceType.toLowerCase() || 'plumber';
+const handleConfirmBooking = async () => {
+    setSubmitting(true);
+    try {
+        let serviceType =
+            (categoryName as string) ||
+            service?.categoryName ||
+            service?.name ||
+            (id as string);
+        serviceType = serviceType.replace(/\s*Service\s*/gi, '').trim();
 
-            const requestBody = {
-                type: finalServiceType,
-                platformServiceIds: [id],
-                coords: {
-                    lat: contextCoordinates?.latitude || 27.7172,
-                    lng: contextCoordinates?.longitude || 85.324,
-                },
-                address: contextAddress,
-                source: 'gps',
-            };
+        const serviceTypeMap: Record<string, string> = {
+            plumber: 'plumber',
+            Plumber: 'plumber',
+            electrician: 'electrician',
+            Electrician: 'electrician',
+            painter: 'painter',
+            Painter: 'painter',
+            carpenter: 'carpenter',
+            Carpenter: 'carpenter',
+            cleaning: 'cleaning',
+            Cleaning: 'cleaning',
+            plumbing: 'plumber',
+            Plumbing: 'plumber',
+            electrical: 'electrician',
+            Electrical: 'electrician',
+            tap: 'plumber',
+            pipe: 'plumber',
+        };
 
-            const response = await makeAuthenticatedRequest(
-                `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/service-requests`,
-                {
-                    method: 'POST',
-                    body: JSON.stringify(requestBody),
-                },
-            );
+        const finalServiceType =
+            serviceTypeMap[serviceType] || serviceType.toLowerCase() || 'plumber';
 
-            const data = await response.json();
+        // ✅ FIXED: Use the correct endpoint for customers
+        const requestBody = {
+            type: finalServiceType,
+            platformServiceIds: [id],
+            coords: {
+                lat: contextCoordinates?.latitude || 27.7172,
+                lng: contextCoordinates?.longitude || 85.324,
+            },
+            address: contextAddress || 'Kathmandu, Nepal',
+            source: 'gps',
+        };
 
-            if (response.ok && data.success) {
-                setBookingModalVisible(false);
-                setBookingData({
-                    requestId: data.requestId || 'SR' + Date.now().toString().slice(-6),
-                    serviceName: service?.name || 'Service',
-                });
-                setSuccessModalVisible(true);
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            } else {
-                Alert.alert('Error', data.message || 'Failed to submit booking');
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            }
-        } catch (error: any) {
-            console.error('Error submitting booking:', error);
-            if (error.message !== 'Session expired') {
-                Alert.alert('Error', 'Network error. Please try again.');
-            }
-        } finally {
-            setSubmitting(false);
+        console.log('📤 Sending booking request:', requestBody);
+
+        // ✅ FIXED: Use the correct endpoint
+        const response = await makeAuthenticatedRequest(
+            `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/users/service-requests`, // ✅ Changed from /api/service-requests
+            {
+                method: 'POST',
+                body: JSON.stringify(requestBody),
+            },
+        );
+
+        const data = await response.json();
+        console.log('📥 Booking response:', data);
+
+        if (response.ok && data.success) {
+            setBookingModalVisible(false);
+            setBookingData({
+                requestId: data.requestId || data.request?.id || 'SR' + Date.now().toString().slice(-6),
+                serviceName: service?.name || 'Service',
+            });
+            setSuccessModalVisible(true);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } else {
+            Alert.alert('Error', data.message || 'Failed to submit booking');
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         }
-    };
+    } catch (error: any) {
+        console.error('❌ Error submitting booking:', error);
+        if (error.message !== 'Session expired') {
+            Alert.alert('Error', error.message || 'Network error. Please try again.');
+        }
+    } finally {
+        setSubmitting(false);
+    }
+};
 
     const makeAuthenticatedRequest = async (url: string, options: RequestInit = {}) => {
         let currentToken = token;

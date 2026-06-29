@@ -179,19 +179,9 @@ export default function ServicesScreen() {
     const searchInputRef = useRef<TextInput>(null);
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const searchFadeAnim = useRef(new Animated.Value(0)).current;
-
-
-    // app/(protected)/(customer)/services/index.tsx
-
     const fetchServices = async () => {
         try {
-            // Try the new hierarchy endpoint
-            // Option A: If you used Fix 2 (recommended)
             const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/public/service-hierarchy`;
-
-            // Option B: If you used Fix 1
-            // const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/platform-services/service-hierarchy`;
-
             console.log('[Services] Fetching from:', url);
 
             const res = await fetch(url);

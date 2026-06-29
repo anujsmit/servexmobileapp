@@ -1,4 +1,6 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+// components/CustomCamera.tsx
+
+import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
     Text,
@@ -8,18 +10,12 @@ import {
     Alert,
     ActivityIndicator,
     SafeAreaView,
-    Platform,
     Dimensions,
+    Platform,
 } from 'react-native';
-import { 
-    Camera, 
-    useCameraDevice, 
-    useCameraPermission,
-    useFrameProcessor
-} from 'react-native-vision-camera';
+import { Camera, CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
-import { runOnJS } from 'react-native-reanimated';
 
 const { width: WINDOW_WIDTH, height: WINDOW_HEIGHT } = Dimensions.get('window');
 
@@ -28,23 +24,25 @@ interface CustomCameraProps {
     onClose: () => void;
     onCapture: (uri: string, base64: string) => void;
     accentColor?: string;
+    aspect?: [number, number];
+    captureQuality?: number;
+    initialFacing?: 'front' | 'back';
 }
 
 export const CustomCamera: React.FC<CustomCameraProps> = ({
     visible,
     onClose,
     onCapture,
-    accentColor = '#179d2e',
+    accentColor = '#0177b8',
+    aspect = [1, 1],
+    captureQuality = 0.8,
+    initialFacing = 'back',
 }) => {
-    const { hasPermission, requestPermission } = useCameraPermission();
-    const device = useCameraDevice('back');
-    const cameraRef = useRef<Camera>(null);
-    
+    const [permission, requestPermission] = useCameraPermissions();
     const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
     const [isProcessing, setIsProcessing] = useState(false);
-    const [stabilityCounter, setStabilityCounter] = useState(0);
-    const [feedbackMessage, setFeedbackMessage] = useState('Align ID inside the box');
-
+    const [facing, setFacing] = useState<'front' | 'back'>(initialFacing);
+    const cameraRef = useRef<CameraView>(null);
     const isMounted = useRef(true);
 
     useEffect(() => {
@@ -54,34 +52,54 @@ export const CustomCamera: React.FC<CustomCameraProps> = ({
         };
     }, []);
 
+    // Request permission when modal becomes visible
     useEffect(() => {
-        if (visible && !hasPermission) {
+        if (visible && !permission?.granted) {
             requestPermission();
         }
-    }, [visible, hasPermission, requestPermission]);
+    }, [visible, permission]);
 
-    // Handle high-speed capture execution when target object is locked
-    const triggerAutoCapture = useCallback(async () => {
+    // Reset facing when modal is opened
+    useEffect(() => {
+        if (visible) {
+            setFacing(initialFacing);
+        }
+    }, [visible]);
+
+    const toggleFacing = () => {
+        setFacing(current => (current === 'back' ? 'front' : 'back'));
+        if (facing === 'front') {
+            setFlashMode('off');
+        }
+    };
+
+    const takePicture = async () => {
         if (!cameraRef.current || isProcessing) return;
-        
+        if (!permission?.granted) {
+            Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+            return;
+        }
+
         try {
             setIsProcessing(true);
-            setFeedbackMessage('Hold still... Capturing');
 
-            const photo = await cameraRef.current.takePhoto({
-                flash: flashMode,
-                enableShutterSound: false,
+            const photo = await cameraRef.current.takePictureAsync({
+                quality: captureQuality,
+                base64: true,
+                skipProcessing: false,
             });
 
-            if (!photo) throw new Error('No capture path returned');
+            if (!photo || !photo.uri) {
+                throw new Error('No capture returned');
+            }
 
-            // Process image manipulation payload matching backend standards
-            const fileUri = `file://${photo.path}`;
             const manipulated = await ImageManipulator.manipulateAsync(
-                fileUri,
-                [{ resize: { width: 1024 } }],
+                photo.uri,
+                [
+                    { resize: { width: aspect[0] > aspect[1] ? 1024 : 768 } },
+                ],
                 {
-                    compress: 0.75,
+                    compress: captureQuality,
                     format: ImageManipulator.SaveFormat.JPEG,
                     base64: true,
                 }
@@ -92,64 +110,57 @@ export const CustomCamera: React.FC<CustomCameraProps> = ({
                 onClose();
             }
         } catch (error) {
-            if (__DEV__) console.error('Auto-capture error:', error);
-            Alert.alert('Scan Failed', 'Could not accurately read document bounds.');
+            console.error('Capture error:', error);
+            Alert.alert(
+                'Capture Failed',
+                'Could not take picture. Please try again.',
+                [{ text: 'OK' }]
+            );
         } finally {
             if (isMounted.current) {
                 setIsProcessing(false);
-                setStabilityCounter(0);
-                setFeedbackMessage('Align ID inside the box');
             }
         }
-    }, [isProcessing, flashMode, onCapture, onClose]);
-
-    // Frame processor tracking loop
-    const processFrameAnalysis = useCallback((isStableDetected: boolean) => {
-        if (isProcessing) return;
-
-        if (isStableDetected) {
-            setStabilityCounter(prev => {
-                const nextCount = prev + 1;
-                // Requires 12 consecutive stable frames before launching auto-shutter
-                if (nextCount >= 12) {
-                    runOnJS(triggerAutoCapture)();
-                } else {
-                    setFeedbackMessage(`Detecting ID... (${Math.round((nextCount / 12) * 100)}%)`);
-                }
-                return nextCount;
-            });
-        } else {
-            setStabilityCounter(0);
-            setFeedbackMessage('Align ID inside the box');
-        }
-    }, [isProcessing, triggerAutoCapture]);
-
-    // Hardware accelerated frame processor loop
-    const frameProcessor = useFrameProcessor((frame) => {
-        'worklet';
-        // Simulating high-performance edge contour metrics.
-        // Replace with specific ML Kit native wrappers (e.g., vision-camera-plugin-mlkit-object-detection) if explicit bound metrics are added.
-        const mockDetectionThreshold = Math.random() > 0.35; 
-        runOnJS(processFrameAnalysis)(mockDetectionThreshold);
-    }, [processFrameAnalysis]);
+    };
 
     if (!visible) return null;
 
-    if (!hasPermission) {
+    // Show loading while checking permission
+    if (!permission) {
+        return (
+            <Modal visible={visible} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <ActivityIndicator size="large" color={accentColor} />
+                    <Text style={styles.permissionSubText}>Initializing camera...</Text>
+                </View>
+            </Modal>
+        );
+    }
+
+    // Show permission request screen if not granted
+    if (!permission.granted) {
         return (
             <Modal visible={visible} transparent animationType="fade">
                 <View style={styles.modalOverlay}>
                     <View style={styles.permissionCard}>
-                        <Ionicons name="camera-off-outline" size={40} color="#EF4444" style={{ marginBottom: 12 }} />
+                        <Ionicons name="camera-off-outline" size={48} color="#EF4444" style={{ marginBottom: 12 }} />
                         <Text style={styles.permissionErrorText}>Camera Permission Required</Text>
                         <Text style={styles.permissionSubText}>
-                            Onboarding requires dynamic verification matching your government credentials.
+                            We need camera access to capture your photo.
                         </Text>
                         <TouchableOpacity
                             style={[styles.primaryBtn, { backgroundColor: accentColor }]}
                             onPress={requestPermission}
+                            activeOpacity={0.8}
                         >
                             <Text style={styles.btnTextWhite}>Grant Permission</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.secondaryBtn, { marginTop: 10 }]}
+                            onPress={onClose}
+                            activeOpacity={0.7}
+                        >
+                            <Text style={[styles.btnText, { color: '#6B7280' }]}>Cancel</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -157,83 +168,85 @@ export const CustomCamera: React.FC<CustomCameraProps> = ({
         );
     }
 
-    if (!device) {
-        return (
-            <Modal visible={visible} transparent>
-                <View style={styles.modalOverlay}>
-                    <ActivityIndicator size="large" color={accentColor} />
-                </View>
-            </Modal>
-        );
-    }
-
+    // Main Camera View - Full screen clean camera
     return (
         <Modal visible={visible} transparent={false} animationType="slide">
             <SafeAreaView style={styles.cameraContainer}>
-                <Camera
+                <CameraView
                     ref={cameraRef}
                     style={StyleSheet.absoluteFill}
-                    device={device}
-                    isActive={visible}
-                    photo={true}
-                    frameProcessor={frameProcessor}
+                    facing={facing}
+                    flash={flashMode}
+                    enableTorch={flashMode === 'on'}
+                    mode="picture"
                 />
 
-                {/* Document Mask Overlay UI Layout */}
+                {/* Overlay UI */}
                 <View style={styles.overlayContainer}>
-                    {/* Top Shade Layer */}
-                    <View style={styles.shadeLayer} />
-
-                    {/* Middle Processing Row */}
-                    <View style={styles.middleRow}>
-                        <View style={styles.shadeLayer} />
+                    {/* Top Bar with Close Button and Facing Indicator */}
+                    <View style={styles.topBar}>
+                        <TouchableOpacity 
+                            style={styles.closeButton} 
+                            onPress={onClose}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="close" size={28} color="#FFF" />
+                        </TouchableOpacity>
                         
-                        {/* Target Capture Area Box */}
-                        <View style={[
-                            styles.targetWindow, 
-                            { borderColor: stabilityCounter > 0 ? '#22c55e' : 'rgba(255,255,255,0.7)' }
-                        ]}>
-                            {/* Reticle Edges */}
-                            <View style={[styles.cornerMarker, styles.topLeft, { borderColor: accentColor }]} />
-                            <View style={[styles.cornerMarker, styles.topRight, { borderColor: accentColor }]} />
-                            <View style={[styles.cornerMarker, styles.bottomLeft, { borderColor: accentColor }]} />
-                            <View style={[styles.cornerMarker, styles.bottomRight, { borderColor: accentColor }]} />
+                        <View style={styles.facingIndicator}>
+                            <Ionicons 
+                                name={facing === 'front' ? 'person' : 'camera'} 
+                                size={16} 
+                                color="rgba(255,255,255,0.8)" 
+                            />
+                            <Text style={styles.facingIndicatorText}>
+                                {facing === 'front' ? 'Selfie' : 'Back'}
+                            </Text>
                         </View>
-
-                        <View style={styles.shadeLayer} />
                     </View>
 
-                    {/* Bottom Shade Layer */}
-                    <View style={[styles.shadeLayer, styles.bottomControlsBlock]}>
-                        
-                        {/* Dynamic Floating Guidance Text Box */}
-                        <View style={[styles.feedbackPill, stabilityCounter > 0 && { backgroundColor: 'rgba(34, 197, 94, 0.95)' }]}>
-                            <Text style={styles.feedbackText}>{feedbackMessage}</Text>
-                        </View>
-
-                        {/* Interactive UI Action Row */}
+                    {/* Bottom Controls */}
+                    <View style={styles.bottomControls}>
+                        {/* Action Buttons */}
                         <View style={styles.actionRow}>
-                            <TouchableOpacity style={styles.circularIconBtn} onPress={onClose}>
-                                <Ionicons name="close" size={24} color="#FFF" />
-                            </TouchableOpacity>
-
-                            {/* Center Status Ring */}
-                            <View style={[styles.outerCaptureRing, { borderColor: stabilityCounter > 0 ? '#22c55e' : '#fff' }]}>
-                                {isProcessing ? (
-                                    <ActivityIndicator color={accentColor} size="small" />
-                                ) : (
-                                    <View style={[styles.innerCaptureDot, { backgroundColor: stabilityCounter > 0 ? '#22c55e' : '#fff' }]} />
-                                )}
-                            </View>
-
+                            {/* Flash Toggle */}
                             <TouchableOpacity 
-                                style={styles.circularIconBtn} 
+                                style={styles.iconBtn} 
                                 onPress={() => setFlashMode(curr => curr === 'on' ? 'off' : 'on')}
+                                activeOpacity={0.7}
+                                disabled={facing === 'front'}
                             >
                                 <Ionicons 
                                     name={flashMode === 'on' ? 'flash' : 'flash-off'} 
-                                    size={22} 
+                                    size={24} 
                                     color={flashMode === 'on' ? '#FFD60A' : '#FFF'} 
+                                />
+                            </TouchableOpacity>
+
+                            {/* Capture Button */}
+                            <TouchableOpacity 
+                                style={[styles.outerCaptureRing, { borderColor: '#fff' }]}
+                                onPress={takePicture}
+                                disabled={isProcessing}
+                                activeOpacity={0.8}
+                            >
+                                {isProcessing ? (
+                                    <ActivityIndicator color={accentColor} size="small" />
+                                ) : (
+                                    <View style={styles.innerCaptureDot} />
+                                )}
+                            </TouchableOpacity>
+
+                            {/* Flip Camera */}
+                            <TouchableOpacity 
+                                style={styles.iconBtn} 
+                                onPress={toggleFacing}
+                                activeOpacity={0.7}
+                            >
+                                <Ionicons 
+                                    name="camera-reverse-outline" 
+                                    size={26} 
+                                    color="#FFF" 
                                 />
                             </TouchableOpacity>
                         </View>
@@ -251,100 +264,110 @@ const styles = StyleSheet.create({
     },
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.8)',
+        backgroundColor: 'rgba(0,0,0,0.85)',
         justifyContent: 'center',
         alignItems: 'center',
+        paddingHorizontal: 24,
     },
     permissionCard: {
         backgroundColor: '#FFF',
-        padding: 24,
-        borderRadius: 20,
+        padding: 32,
+        borderRadius: 24,
         alignItems: 'center',
-        width: '85%',
+        width: '100%',
+        maxWidth: 380,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 16,
+        elevation: 8,
     },
     permissionErrorText: {
-        fontSize: 18,
+        fontSize: 20,
         fontWeight: '700',
         color: '#111827',
         textAlign: 'center',
+        marginBottom: 4,
     },
     permissionSubText: {
         fontSize: 14,
         color: '#6B7280',
         textAlign: 'center',
-        marginTop: 8,
+        marginTop: 4,
         marginBottom: 20,
+        lineHeight: 20,
     },
     primaryBtn: {
+        paddingVertical: 14,
+        borderRadius: 12,
+        width: '100%',
+        alignItems: 'center',
+    },
+    secondaryBtn: {
         paddingVertical: 12,
-        borderRadius: 10,
+        borderRadius: 12,
         width: '100%',
         alignItems: 'center',
     },
     btnTextWhite: {
         color: '#FFF',
         fontWeight: '600',
+        fontSize: 16,
+    },
+    btnText: {
+        fontWeight: '500',
+        fontSize: 15,
     },
     overlayContainer: {
         flex: 1,
         justifyContent: 'space-between',
+        paddingVertical: 20,
     },
-    shadeLayer: {
-        flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    },
-    middleRow: {
+    topBar: {
         flexDirection: 'row',
-        height: 240, 
-    },
-    targetWindow: {
-        width: WINDOW_WIDTH * 0.85,
-        height: 240,
-        borderWidth: 2,
-        position: 'relative',
-        backgroundColor: 'transparent',
-    },
-    cornerMarker: {
-        position: 'absolute',
-        width: 24,
-        height: 24,
-    },
-    topLeft: { top: -2, left: -2, borderTopWidth: 4, borderLeftWidth: 4 },
-    topRight: { top: -2, right: -2, borderTopWidth: 4, borderRightWidth: 4 },
-    bottomLeft: { bottom: -2, left: -2, borderBottomWidth: 4, borderLeftWidth: 4 },
-    bottomRight: { bottom: -2, right: -2, borderBottomWidth: 4, borderRightWidth: 4 },
-    bottomControlsBlock: {
-        flex: 1.5,
-        justifyContent: 'flex-start',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        paddingTop: 30,
-    },
-    feedbackPill: {
-        backgroundColor: 'rgba(0,0,0,0.85)',
-        paddingVertical: 8,
         paddingHorizontal: 20,
-        borderRadius: 20,
-        marginBottom: 40,
+    },
+    closeButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    facingIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.15)',
     },
-    feedbackText: {
-        color: '#FFF',
-        fontSize: 14,
-        fontWeight: '600',
+    facingIndicatorText: {
+        color: 'rgba(255,255,255,0.8)',
+        fontSize: 12,
+        fontWeight: '500',
+    },
+    bottomControls: {
+        paddingHorizontal: 20,
+        paddingBottom: Platform.OS === 'ios' ? 10 : 20,
     },
     actionRow: {
         flexDirection: 'row',
         justifyContent: 'space-around',
         alignItems: 'center',
-        width: '100%',
-        paddingHorizontal: 40,
+        paddingHorizontal: 20,
     },
-    circularIconBtn: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: 'rgba(255,255,255,0.15)',
+    iconBtn: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: 'rgba(255,255,255,0.12)',
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -355,10 +378,12 @@ const styles = StyleSheet.create({
         borderWidth: 4,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.1)',
     },
     innerCaptureDot: {
-        width: 54,
-        height: 54,
-        borderRadius: 27,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#FFF',
     },
 });

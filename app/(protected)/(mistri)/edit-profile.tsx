@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
-import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useMistriProfileQuery, useUpdateMistriProfile } from '../../../hooks/queries';
@@ -291,32 +290,6 @@ export default function EditProfileScreen() {
         setCameraVisible(false);
     };
 
-    // Photo Picker (Gallery only now)
-    const pickFromGallery = async () => {
-        if (isUploadingImage) return;
-
-        try {
-            if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (status !== 'granted') {
-                    Alert.alert('Permission Required', 'Gallery permission is needed.');
-                    return;
-                }
-            }
-            
-            const result = await ImagePicker.launchImageLibraryAsync({
-                allowsEditing: true,
-                quality: 0.8,
-            });
-            
-            if (!result.canceled && result.assets.length > 0) {
-                await processImage(result.assets[0]);
-            }
-        } catch (error: any) {
-            if (__DEV__) console.error('Gallery error:', error);
-            Alert.alert('Error', error.message || 'Failed to pick image.');
-        }
-    };
 
     const processImage = async (asset: any) => {
         try {
@@ -352,10 +325,6 @@ export default function EditProfileScreen() {
                 { 
                     text: 'Take Photo', 
                     onPress: handleCameraOpen
-                },
-                {
-                    text: 'Choose from Gallery',
-                    onPress: pickFromGallery
                 },
                 { text: 'Cancel', style: 'cancel' }
             ]

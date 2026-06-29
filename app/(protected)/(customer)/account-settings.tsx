@@ -335,7 +335,7 @@ export default function CustomerAccountSettingsScreen() {
             const token = await SecureStore.getItemAsync('token');
             if (!token) throw new Error('Not authenticated');
 
-            const url = `${API_BASE_URL}/api/auth/delete-account`;
+            const url = `${API_BASE_URL}/api/users/auth/delete-account`;
             console.log('📡 Sending request to:', url);
 
             const response = await fetch(url, {
@@ -448,7 +448,7 @@ export default function CustomerAccountSettingsScreen() {
     const handleRequestPhoneChange = async (newPhone: string) => {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
-        const response = await fetch(`${API_BASE_URL}/api/auth/request-phone-change`, {
+        const response = await fetch(`${API_BASE_URL}/api/users/auth/request-phone-change`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ newPhoneNumber: newPhone }),
@@ -462,7 +462,7 @@ export default function CustomerAccountSettingsScreen() {
     const handleVerifyPhoneChange = async (newPhone: string, otp: string) => {
         const token = await SecureStore.getItemAsync('token');
         if (!token) throw new Error('Not authenticated');
-        const response = await fetch(`${API_BASE_URL}/api/auth/verify-phone-change`, {
+        const response = await fetch(`${API_BASE_URL}/api/users/auth/verify-phone-change`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ newPhoneNumber: newPhone, otp }),

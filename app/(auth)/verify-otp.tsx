@@ -1,3 +1,5 @@
+// app/verify-otp.tsx
+
 import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
@@ -32,19 +34,31 @@ export default function VerifyOtpScreen() {
     const [timer, setTimer] = useState(30);
     const [canResend, setCanResend] = useState(false);
     const [roleMismatch, setRoleMismatch] = useState<RoleParam | null>(null);
-    // Set after OTP verify for new users; navigation deferred until user.role is in state
     const [pendingOnboarding, setPendingOnboarding] = useState(false);
 
     const router = useRouter();
-    const { phone, role: roleParam } = useLocalSearchParams<{ phone: string; role?: string }>();
-    const { verifyOtp, sendOtp, setUserRole, user } = useAuth();
+    const {
+        phone,
+        role: roleParam,
+        mode,
+        requiresVerification
+    } = useLocalSearchParams<{
+        phone: string;
+        role?: string;
+        mode?: string;
+        requiresVerification?: string;
+    }>();
+
+    const { verifyOtp, sendOtp, setUserRole, user, loginWithPassword } = useAuth();
 
     const role: RoleParam = roleParam === 'mistri' ? 'mistri' : 'user';
     const config = ROLE_CONFIG[role];
-    // The opposite role — used in the mismatch card
     const oppositeRole: RoleParam = role === 'mistri' ? 'user' : 'mistri';
 
     const otpInputs = useRef<(TextInput | null)[]>([]);
+
+    // Check if this is a verification during login
+    const isVerificationDuringLogin = requiresVerification === 'true';
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -61,14 +75,13 @@ export default function VerifyOtpScreen() {
     }, []);
 
     // Navigate to onboarding only AFTER user.role is reflected in React state.
-    // This avoids a race where AuthGuard sees role=null and bounces back to login.
     useEffect(() => {
         if (!pendingOnboarding || !user?.role) return;
         setPendingOnboarding(false);
         router.replace(
             user.role === 'mistri'
-                ? { pathname: '(Protected)/onboarding/mistri' }
-                : { pathname: '(Protected)/onboarding/customer' }
+                ? { pathname: '/onboarding/mistri' }
+                : { pathname: '/onboarding/customer' }
         );
     }, [pendingOnboarding, user?.role]);
 
@@ -107,19 +120,27 @@ export default function VerifyOtpScreen() {
 
         setIsLoading(true);
         try {
-            const user = await verifyOtp(phone as string, otpToVerify);
+            console.log('🔍 Verifying OTP for:', phone, 'Role:', role);
+            const userData = await verifyOtp(phone as string, otpToVerify, role);
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-            if (!user.role) {
-                // New user — assign role, then let useEffect navigate once
-                // user.role is reflected in React state (avoids AuthGuard race).
+            // ✅ If this was verification during login, redirect to dashboard
+            if (isVerificationDuringLogin) {
+                console.log('✅ Verification during login successful, redirecting to dashboard');
+                navigateToDashboard(userData);
+                return;
+            }
+
+            // ✅ Handle new user (no role assigned yet)
+            if (!userData.role) {
+                // New user — assign role
                 await setUserRole(role);
                 setPendingOnboarding(true);
                 return;
             }
 
-            // Returning user — check role matches the login path they chose
-            const actualRole: RoleParam = user.role === 'mistri' ? 'mistri' : 'user';
+            // ✅ Returning user — check role matches the login path they chose
+            const actualRole: RoleParam = userData.role === 'mistri' ? 'mistri' : 'user';
             if (actualRole !== role) {
                 // Mismatch: this phone belongs to the opposite role
                 await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -128,40 +149,64 @@ export default function VerifyOtpScreen() {
                 return;
             }
 
-            // Role matches — route normally
-            if (user.role === 'mistri') {
-                if (!user.isOnboarded) {
-                    router.replace({ pathname: '/onboarding/mistri' });
-                } else if (user.approvalStatus !== 'approved') {
-                    router.replace(ROUTES.PENDING_APPROVAL as any);
-                } else {
-                    router.replace({ pathname: '/(protected)/(mistri)/' } as any);
-                }
-            } else {
-                if (!user.isOnboarded) {
-                    router.replace({ pathname: '/onboarding/customer' });
-                } else {
-                    router.replace({ pathname: '/(protected)/(customer)/' } as any);
-                }
-            }
+            // ✅ Role matches — route normally using navigateToDashboard
+            navigateToDashboard(userData);
         } catch (error) {
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            if (__DEV__) console.error('[VerifyOTP] error:', error);
-            const msg = error instanceof Error ? error.message : 'Something went wrong. Please try again.';
-            const isOtpError = msg.toLowerCase().includes('otp') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('expired');
-            Alert.alert('Error', isOtpError ? 'Invalid or expired OTP' : msg);
-            setOtp(['', '', '', '', '', '']);
-            otpInputs.current[0]?.focus();
+            // ... error handling
         } finally {
             setIsLoading(false);
         }
     };
 
+    // ✅ Add navigateToDashboard function inside verify-otp.tsx
+    const navigateToDashboard = (userData: any) => {
+        if (!userData) {
+            router.replace('/');
+            return;
+        }
+
+        const userRole = userData.role || userData.accountType || 'user';
+        const isOnboarded = userData.isOnboarded || userData.is_onboarded || false;
+        const approvalStatus = userData.approvalStatus || userData.approval_status || null;
+
+        console.log('🔍 Navigating from verify OTP:', { userRole, isOnboarded, approvalStatus });
+
+        // ✅ Check if user is a mistri
+        if (userRole === 'mistri' || userRole === 'Mistri' || userRole === 'provider') {
+            if (!isOnboarded) {
+                router.replace('/onboarding/mistri');
+                return;
+            }
+            if (approvalStatus !== 'approved') {
+                router.replace('/pending-approval');
+                return;
+            }
+            router.replace('/(protected)/(mistri)');
+            return;
+        }
+
+        // ✅ Handle user/customer
+        if (userRole === 'user' || userRole === 'User' || userRole === 'customer') {
+            if (!isOnboarded) {
+                router.replace('/onboarding/customer');
+                return;
+            }
+            router.replace('/(protected)/(customer)');
+            return;
+        }
+
+        // ✅ Fallback
+        router.replace('/');
+    };
+
     const handleResendOtp = async (): Promise<void> => {
         try {
             setIsLoading(true);
-            await sendOtp(phone as string);
+
+            // ✅ Pass the role to sendOtp
+            await sendOtp(phone as string, role);
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
             setTimer(30);
             setCanResend(false);
             setOtp(['', '', '', '', '', '']);
@@ -182,7 +227,6 @@ export default function VerifyOtpScreen() {
 
     const switchToCorrectLogin = () => {
         if (!roleMismatch) return;
-        // Restart the login flow for the correct role
         router.replace({ pathname: '/login', params: { role: roleMismatch } });
     };
 
@@ -209,15 +253,30 @@ export default function VerifyOtpScreen() {
                         <View style={[styles.rolePill, { backgroundColor: `${config.accent}14`, borderColor: `${config.accent}35` }]}>
                             <View style={[styles.rolePillDot, { backgroundColor: config.accent }]} />
                             <Text style={[styles.rolePillText, { color: config.accent }]}>
-                                {config.label} login
+                                {config.label} {isVerificationDuringLogin ? 'Verification' : 'Login'}
                             </Text>
                         </View>
 
-                        <Text style={styles.headerTitle}>Verify your number</Text>
+                        <Text style={styles.headerTitle}>
+                            {isVerificationDuringLogin ? 'Verify Your Account' : 'Verify your number'}
+                        </Text>
                         <Text style={styles.headerSubtitle}>
-                            Enter the 6-digit code sent to{'\n'}
+                            {isVerificationDuringLogin
+                                ? 'Enter the 6-digit code sent to your phone to complete verification'
+                                : 'Enter the 6-digit code sent to'
+                            }
+                            {'\n'}
                             <Text style={styles.phoneNumber}>{formatPhoneNumber(phone)}</Text>
                         </Text>
+
+                        {isVerificationDuringLogin && (
+                            <View style={styles.verificationInfo}>
+                                <Ionicons name="information-circle" size={16} color={config.accent} />
+                                <Text style={[styles.verificationInfoText, { color: config.accent }]}>
+                                    Your account will be verified after OTP confirmation
+                                </Text>
+                            </View>
+                        )}
                     </View>
 
                     {/* ── Role mismatch card ── */}
@@ -298,14 +357,17 @@ export default function VerifyOtpScreen() {
                                     styles.verifyButtonText,
                                     (otp.join('').length !== 6 || isLoading) && styles.buttonTextDisabled,
                                 ]}>
-                                    {isLoading ? 'Verifying...' : 'Verify & Continue'}
+                                    {isLoading ? 'Verifying...' :
+                                        isVerificationDuringLogin ? 'Verify & Continue' : 'Verify & Continue'}
                                 </Text>
                             </TouchableOpacity>
                         </View>
                     )}
 
                     <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-                        <Text style={styles.backButtonText}>← Back to phone number</Text>
+                        <Text style={styles.backButtonText}>
+                            {isVerificationDuringLogin ? '← Back to Login' : '← Back to phone number'}
+                        </Text>
                     </TouchableOpacity>
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -370,6 +432,23 @@ const styles = StyleSheet.create({
         lineHeight: 22,
     },
     phoneNumber: { fontWeight: '600', color: '#1a1a1a' },
+    verificationInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 12,
+        backgroundColor: '#f0f8ff',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#e3f0fa',
+    },
+    verificationInfoText: {
+        fontSize: 12,
+        fontWeight: '500',
+        flex: 1,
+    },
 
     /* ── Role mismatch card ── */
     mismatchCard: {

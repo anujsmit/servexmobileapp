@@ -1,3 +1,5 @@
+// context/AuthContext.tsx
+
 import { createContext, useContext, useState, ReactNode, useRef, useCallback } from 'react';
 import { useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
@@ -10,11 +12,13 @@ export interface User {
     phoneNumber: string;
     fullName: string;
     role?: string;
+    accountType?: string;
     isOnboarded?: boolean;
     approvalStatus?: string | null;
     approvalRejectionReason?: string | null;
     defaultLocation?: string | null;
     isVerified?: boolean;
+    isActive?: boolean;
     deletionScheduledAt?: string | null;
     hasScheduledDeletion?: boolean;
     [key: string]: any;
@@ -31,6 +35,8 @@ export interface RegisterPayload {
 export interface LoginResponse {
     success?: boolean;
     isVerified?: boolean;
+    requiresVerification?: boolean;
+    phone?: string;
     message?: string;
     accessToken?: string;
     refreshToken?: string;
@@ -45,24 +51,31 @@ type AuthContextData = {
     token: string | null;
     isLoading: boolean;
     isTokenRefreshing: boolean;
-    sendOtp: (phone: string) => Promise<void>;
+    sendOtp: (phone: string, role?: 'user' | 'mistri') => Promise<void>;
     register: (payload: RegisterPayload) => Promise<void>;
-    loginWithPassword: (phone: string, password: string) => Promise<LoginResponse>;
-    verifyOtp: (phone: string, otp: string) => Promise<User>;
+    loginWithPassword: (phone: string, password: string, role?: 'user' | 'mistri') => Promise<LoginResponse>;
+    verifyOtp: (phone: string, otp: string, role?: 'user' | 'mistri') => Promise<User>;
     setUserRole: (role: string) => Promise<void>;
-    updateProfile: (fullName: string, location?: string) => Promise<void>;
+    updateProfile: (fullName: string, location?: string, avatarUrl?: string, isOnboarded?: boolean) => Promise<void>;
     logout: () => Promise<void>;
     getMe: () => Promise<void>;
     refreshUser: () => Promise<void>;
     refreshAccessToken: () => Promise<string | null>;
-    // ✅ New functions
     cancelDeletion: () => Promise<void>;
     getDeletionStatus: () => Promise<{ deletionScheduledAt: string | null } | null>;
+    getRole: () => 'user' | 'mistri' | null;
 };
 
 const AuthContext = createContext<AuthContextData>({} as AuthContextData);
 
 import { API_BASE_URL as API_URL } from '../lib/config';
+
+// ============================================
+// HELPER: Get the correct API path based on role
+// ============================================
+const getAuthPath = (role: 'user' | 'mistri' = 'user'): string => {
+    return role === 'mistri' ? '/api/mistri/auth' : '/api/users/auth';
+};
 
 // Check if running in Expo Go
 const isExpoGo = (): boolean => {
@@ -90,12 +103,12 @@ const getProjectId = (): string | undefined => {
     try {
         const config = Constants?.expoConfig;
         const manifest = Constants?.manifest;
-        
-        const projectId = config?.extra?.eas?.projectId || 
-                         manifest?.extra?.eas?.projectId ||
-                         config?.projectId ||
-                         manifest?.projectId;
-        
+
+        const projectId = config?.extra?.eas?.projectId ||
+            manifest?.extra?.eas?.projectId ||
+            config?.projectId ||
+            manifest?.projectId;
+
         return projectId;
     } catch (error) {
         if (__DEV__) console.error('Error getting project ID:', error);
@@ -109,7 +122,7 @@ const getNotifications = async () => {
         if (__DEV__) console.log('Skipping expo-notifications import in Expo Go');
         return null;
     }
-    
+
     try {
         const notifications = await import('expo-notifications');
         return notifications;
@@ -136,6 +149,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [tokenExpiry, setTokenExpiry] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isTokenRefreshing, setIsTokenRefreshing] = useState<boolean>(false);
+    const [userRole, setUserRoleState] = useState<'user' | 'mistri' | null>(null);
 
     const queryClient = useQueryClient();
     const appStateSubscription = useRef<any>(null);
@@ -144,6 +158,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const tokenRef = useRef<string | null>(null);
     const refreshTokenRef = useRef<string | null>(null);
     const tokenExpiryRef = useRef<number | null>(null);
+    const roleRef = useRef<'user' | 'mistri' | null>(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -151,23 +166,66 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const loadAuth = async () => {
             try {
                 setIsLoading(true);
+                console.log('🔐 Loading auth state...');
+
+                // ✅ Get all stored values
                 const storedToken = await SecureStore.getItemAsync('token');
                 const storedRefreshToken = await SecureStore.getItemAsync('refreshToken');
                 const storedExpiry = await SecureStore.getItemAsync('tokenExpiry');
                 const storedUser = await SecureStore.getItemAsync('user');
+                const storedRole = await SecureStore.getItemAsync('userRole');
+
+                console.log('🔐 Stored token exists:', !!storedToken);
+                console.log('🔐 Stored expiry:', storedExpiry);
 
                 if (isMounted) {
-                    if (storedToken) { setToken(storedToken); tokenRef.current = storedToken; }
-                    if (storedRefreshToken) { setRefreshToken(storedRefreshToken); refreshTokenRef.current = storedRefreshToken; }
-                    if (storedExpiry) { setTokenExpiry(Number(storedExpiry)); tokenExpiryRef.current = Number(storedExpiry); }
-                    if (storedUser) setUser(JSON.parse(storedUser));
+                    // ✅ Set token first
+                    if (storedToken) {
+                        setToken(storedToken);
+                        tokenRef.current = storedToken;
+                    }
 
+                    if (storedRefreshToken) {
+                        setRefreshToken(storedRefreshToken);
+                        refreshTokenRef.current = storedRefreshToken;
+                    }
+
+                    if (storedExpiry) {
+                        const expiryNum = Number(storedExpiry);
+                        setTokenExpiry(expiryNum);
+                        tokenExpiryRef.current = expiryNum;
+                    }
+
+                    if (storedRole) {
+                        const role = storedRole as 'user' | 'mistri';
+                        setUserRoleState(role);
+                        roleRef.current = role;
+                    }
+
+                    if (storedUser) {
+                        try {
+                            const parsedUser = JSON.parse(storedUser);
+                            setUser(parsedUser);
+                            if (!storedRole && parsedUser.role) {
+                                const role = parsedUser.role === 'mistri' ? 'mistri' : 'user';
+                                setUserRoleState(role);
+                                roleRef.current = role;
+                            }
+                        } catch (e) {
+                            console.error('Failed to parse stored user:', e);
+                        }
+                    }
+
+                    // ✅ Check if token is valid
                     if (storedToken && storedExpiry) {
                         const isExpired = Date.now() >= Number(storedExpiry);
+                        console.log('🔐 Token expired:', isExpired);
 
                         if (isExpired && storedRefreshToken) {
+                            console.log('🔐 Token expired, refreshing...');
                             await refreshAccessToken();
-                        } else if (storedToken) {
+                        } else if (storedToken && !isExpired) {
+                            console.log('🔐 Token valid, validating user...');
                             await validateUserExists(storedToken);
                             scheduleTokenRefresh();
                             if (!isExpoGo() && getProjectId()) {
@@ -178,6 +236,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 }
             } catch (error) {
                 if (__DEV__) console.error('Error loading auth state:', error);
+                // ✅ Don't logout on error - keep existing state if possible
             } finally {
                 if (isMounted) setIsLoading(false);
             }
@@ -185,12 +244,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         loadAuth();
 
+        // ✅ Handle app state changes - only refresh token, don't logout
         const handleAppStateChange = async (nextAppState: AppStateStatus) => {
             if (nextAppState === 'active' && tokenRef.current) {
+                console.log('📱 App became active, checking token...');
                 if (tokenExpiryRef.current && Date.now() >= (tokenExpiryRef.current - 5 * 60 * 1000)) {
+                    console.log('📱 Token near expiry, refreshing...');
                     await refreshAccessToken();
-                } else {
-                    await validateUserExists(tokenRef.current);
+                } else if (tokenRef.current) {
+                    // ✅ Validate user exists but don't logout on 401 (let refresh handle it)
+                    try {
+                        const role = roleRef.current || 'user';
+                        const path = getAuthPath(role);
+                        const response = await fetch(`${API_URL}${path}/profile`, {
+                            headers: { Authorization: `Bearer ${tokenRef.current}` },
+                        });
+
+                        if (response.status === 401) {
+                            console.log('📱 Token invalid on app resume, refreshing...');
+                            await refreshAccessToken();
+                        }
+                    } catch (error) {
+                        console.log('📱 Error validating user on app resume:', error);
+                    }
                 }
             }
         };
@@ -199,13 +275,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         return () => {
             isMounted = false;
-            if (appStateSubscription.current) appStateSubscription.current.remove();
-            if (tokenRefreshTimeout.current) clearTimeout(tokenRefreshTimeout.current);
+            if (appStateSubscription.current) {
+                appStateSubscription.current.remove();
+            }
+            if (tokenRefreshTimeout.current) {
+                clearTimeout(tokenRefreshTimeout.current);
+                tokenRefreshTimeout.current = null;
+            }
         };
     }, []);
 
     const scheduleTokenRefresh = useCallback(() => {
-        if (tokenRefreshTimeout.current) clearTimeout(tokenRefreshTimeout.current);
+        if (tokenRefreshTimeout.current) {
+            clearTimeout(tokenRefreshTimeout.current);
+            tokenRefreshTimeout.current = null;
+        }
         if (!tokenExpiry) return;
 
         const timeUntilRefresh = Math.max(0, tokenExpiry - Date.now() - 5 * 60 * 1000);
@@ -221,22 +305,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const validateUserExists = async (authToken: string) => {
         if (!authToken) return;
+        const role = roleRef.current || 'user';
+        const path = getAuthPath(role);
+
         try {
-            const response = await fetch(`${API_URL}/api/auth/me`, {
+            const response = await fetch(`${API_URL}${path}/profile`, {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
+
+            // ✅ Only logout on 404 (user deleted)
             if (response.status === 404) {
+                console.log('👤 User not found, logging out...');
                 await logout();
                 return;
             }
+
+            // ✅ On 401, try refresh (don't logout immediately)
             if (response.status === 401) {
+                console.log('👤 Token invalid, refreshing...');
                 await refreshAccessToken();
                 return;
             }
+
             if (response.ok) {
-                const { user } = await response.json();
-                setUser(user);
-                await SecureStore.setItemAsync('user', JSON.stringify(user));
+                const data = await response.json();
+                const userData = data.user || data;
+                setUser(userData);
+                await SecureStore.setItemAsync('user', JSON.stringify(userData));
             }
         } catch (error) {
             if (__DEV__) console.error('Failed to validate user exists', error);
@@ -245,7 +340,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const registerPushToken = async (authToken: string) => {
         if (!authToken) return;
-        
+
         if (isExpoGo()) {
             if (__DEV__) console.log('Skipping push notification registration in Expo Go');
             return;
@@ -328,17 +423,39 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    // ============================================
+    // REGISTER
+    // ============================================
     const register = async (payload: RegisterPayload) => {
-        const response = await fetch(`${API_URL}/api/auth/register`, {
+        const role = payload.role || 'user';
+        const path = getAuthPath(role);
+        const url = `${API_URL}${path}/register`;
+
+        console.log('🔍 Register URL:', url);
+        console.log('🔍 Role:', role);
+
+        const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({
+                phone: payload.phone,
+                fullName: payload.fullName,
+                password: payload.password,
+                dob: payload.dob || undefined,
+            }),
         });
 
         const data = await response.json();
+        console.log('🔍 Register Response Status:', response.status);
+
         if (!response.ok) {
             throw new Error(data.message || 'Registration failed');
         }
+
+        // Store the role
+        setUserRoleState(role);
+        roleRef.current = role;
+        await SecureStore.setItemAsync('userRole', role);
 
         if (data.accessToken) {
             const accessToken = data.accessToken;
@@ -348,104 +465,488 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             tokenRef.current = accessToken;
             setTokenExpiry(expiryTime);
             tokenExpiryRef.current = expiryTime;
-            setUser(data.user);
+
+            const userData = data.user || data;
+            userData.role = role;
+            setUser(userData);
 
             await SecureStore.setItemAsync('token', accessToken);
             await SecureStore.setItemAsync('tokenExpiry', String(expiryTime));
-            await SecureStore.setItemAsync('user', JSON.stringify(data.user));
+            await SecureStore.setItemAsync('user', JSON.stringify(userData));
+
+            if (data.refreshToken) {
+                setRefreshToken(data.refreshToken);
+                refreshTokenRef.current = data.refreshToken;
+                await SecureStore.setItemAsync('refreshToken', data.refreshToken);
+            }
 
             scheduleTokenRefresh();
-            
+
             if (!isExpoGo() && getProjectId()) {
                 registerPushToken(accessToken);
             }
         }
     };
 
-    // ✅ Updated loginWithPassword to handle deletion status
-    const loginWithPassword = async (phone: string, password: string): Promise<LoginResponse> => {
-        const response = await fetch(`${API_URL}/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone, password }),
-        });
+    // ============================================
+    // LOGIN WITH PASSWORD
+    // ============================================
+    const loginWithPassword = async (phone: string, password: string, role: 'user' | 'mistri' = 'user'): Promise<LoginResponse> => {
+        try {
+            const path = getAuthPath(role);
+            const url = `${API_URL}${path}/login`;
 
-        const data = await response.json();
+            console.log('🔍 === LOGIN DEBUG ===');
+            console.log('🔍 API_URL:', API_URL);
+            console.log('🔍 Role:', role);
+            console.log('🔍 Path:', path);
+            console.log('🔍 Full URL:', url);
+            console.log('🔍 Phone:', phone);
 
-        if (response.status === 403 && data.isVerified === false) {
-            return { isVerified: false, message: data.message };
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone, password }),
+            });
+
+            // Check if response is HTML (error page)
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('text/html')) {
+                const text = await response.text();
+                console.error('❌ Received HTML instead of JSON:', text.substring(0, 200));
+                throw new Error(`Server returned HTML (${response.status}). The endpoint ${url} may not exist.`);
+            }
+
+            // Parse the response
+            let data;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                console.error('❌ Failed to parse JSON:', parseError);
+                const text = await response.text();
+                console.error('❌ Raw response:', text);
+                throw new Error('Invalid response from server');
+            }
+
+            console.log('🔍 Login Response Status:', response.status);
+            console.log('🔍 Login Response Data:', data);
+
+            // Handle rate limiting (429)
+            if (response.status === 429) {
+                throw new Error('429: Too many login attempts. Please wait a few minutes.');
+            }
+
+            // Handle verification required
+            if (response.status === 403 && data?.isVerified === false) {
+                return {
+                    isVerified: false,
+                    requiresVerification: true,
+                    phone: data.phone || phone,
+                    message: data.message || 'Please verify your phone number',
+                    user: data.user,
+                };
+            }
+
+            if (!response.ok) {
+                const errorMessage = data?.message || data?.error || 'Login failed';
+                throw new Error(errorMessage);
+            }
+
+            // The response might have the user data directly or nested in a 'user' property
+            const userData = data?.user || data;
+
+            if (!userData || typeof userData !== 'object') {
+                console.error('❌ Invalid user data received:', userData);
+                throw new Error('Invalid user data received from server');
+            }
+
+            // Ensure we have the user ID
+            if (!userData.id) {
+                console.error('❌ User data missing ID:', userData);
+                throw new Error('User data missing ID');
+            }
+
+            const accessToken = data?.accessToken;
+            const newRefreshToken = data?.refreshToken;
+            const expiryTime = data?.expiresAt || (Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+            if (!accessToken) {
+                console.error('❌ No access token in response:', data);
+                throw new Error('No access token received');
+            }
+
+            // Store the role
+            userData.role = role;
+            setUserRoleState(role);
+            roleRef.current = role;
+            await SecureStore.setItemAsync('userRole', role);
+
+            setToken(accessToken);
+            tokenRef.current = accessToken;
+            setRefreshToken(newRefreshToken);
+            refreshTokenRef.current = newRefreshToken;
+            setTokenExpiry(expiryTime);
+            tokenExpiryRef.current = expiryTime;
+
+            setUser(userData);
+
+            await SecureStore.setItemAsync('token', accessToken);
+            if (newRefreshToken) await SecureStore.setItemAsync('refreshToken', newRefreshToken);
+            await SecureStore.setItemAsync('tokenExpiry', String(expiryTime));
+            await SecureStore.setItemAsync('user', JSON.stringify(userData));
+
+            scheduleTokenRefresh();
+
+            if (!isExpoGo() && getProjectId()) {
+                registerPushToken(accessToken);
+            }
+
+            return {
+                isVerified: true,
+                user: userData,
+                accessToken,
+                refreshToken: newRefreshToken,
+                requiresDeletionAction: data?.requiresDeletionAction || false,
+                deletionScheduledAt: data?.deletionScheduledAt || null,
+            };
+        } catch (error: any) {
+            console.error('❌ Login error:', error);
+            throw new Error(error.message || 'Login failed. Please try again.');
         }
-
-        if (!response.ok) {
-            throw new Error(data.message || 'Login failed');
-        }
-
-        const accessToken = data.accessToken;
-        const newRefreshToken = data.refreshToken;
-        const expiryTime = data.expiresAt || (Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-        // ✅ Store token even if deletion is scheduled (so user can cancel it)
-        setToken(accessToken);
-        tokenRef.current = accessToken;
-        setRefreshToken(newRefreshToken);
-        refreshTokenRef.current = newRefreshToken;
-        setTokenExpiry(expiryTime);
-        tokenExpiryRef.current = expiryTime;
-        setUser(data.user);
-
-        await SecureStore.setItemAsync('token', accessToken);
-        if (newRefreshToken) await SecureStore.setItemAsync('refreshToken', newRefreshToken);
-        await SecureStore.setItemAsync('tokenExpiry', String(expiryTime));
-        await SecureStore.setItemAsync('user', JSON.stringify(data.user));
-
-        scheduleTokenRefresh();
-        
-        if (!isExpoGo() && getProjectId()) {
-            registerPushToken(accessToken);
-        }
-
-        // ✅ Return deletion status if present
-        return {
-            isVerified: true,
-            user: data.user,
-            accessToken,
-            requiresDeletionAction: data.requiresDeletionAction || false,
-            deletionScheduledAt: data.deletionScheduledAt || null,
-        };
     };
 
-    const sendOtp = async (phone: string) => {
-        const response = await fetch(`${API_URL}/api/auth/otp/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone }),
-        });
-        if (!response.ok) throw new Error('Failed to send OTP');
+    // ============================================
+    // SEND OTP
+    // ============================================
+    const sendOtp = async (phone: string, role: 'user' | 'mistri' = 'user') => {
+        try {
+            const path = getAuthPath(role);
+            const endpoint = '/resend-otp';
+            const url = `${API_URL}${path}${endpoint}`;
+
+            console.log('🔍 Send OTP URL:', url);
+            console.log('🔍 Role:', role);
+            console.log('🔍 Phone:', phone);
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone }),
+            });
+
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('text/html')) {
+                const text = await response.text();
+                console.error('❌ Received HTML instead of JSON:', text.substring(0, 200));
+                throw new Error(`Server returned HTML (${response.status}). The endpoint ${url} may not exist.`);
+            }
+
+            let data;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                console.error('❌ Failed to parse JSON:', parseError);
+                const text = await response.text();
+                console.error('❌ Raw response:', text);
+                throw new Error('Invalid response from server');
+            }
+
+            console.log('🔍 Send OTP Response Status:', response.status);
+            console.log('🔍 Send OTP Response:', data);
+
+            if (!response.ok) {
+                throw new Error(data?.message || 'Failed to send OTP');
+            }
+        } catch (error: any) {
+            console.error('❌ Send OTP error:', error);
+            throw new Error(error.message || 'Failed to send OTP. Please try again.');
+        }
     };
 
+    // ============================================
+    // VERIFY OTP
+    // ============================================
+    const verifyOtp = async (phone: string, otp: string, role: 'user' | 'mistri' = 'user'): Promise<User> => {
+        try {
+            const path = getAuthPath(role);
+            const endpoint = role === 'mistri' ? '/otp/verify' : '/verify-otp';
+            const url = `${API_URL}${path}${endpoint}`;
+
+            console.log('🔍 Verify OTP URL:', url);
+            console.log('🔍 Role:', role);
+            console.log('🔍 Phone:', phone);
+            console.log('🔍 OTP:', otp);
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone, otp }),
+            });
+
+            // Check if response is HTML (error page)
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('text/html')) {
+                const text = await response.text();
+                console.error('❌ Received HTML instead of JSON:', text.substring(0, 200));
+                throw new Error(`Server returned HTML (${response.status}). The endpoint ${url} may not exist.`);
+            }
+
+            // Parse the response
+            let data;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                console.error('❌ Failed to parse JSON:', parseError);
+                const text = await response.text();
+                console.error('❌ Raw response:', text);
+                throw new Error('Invalid response from server');
+            }
+
+            console.log('🔍 Verify OTP Response Status:', response.status);
+            console.log('🔍 Verify OTP Response Data:', data);
+
+            if (!response.ok) {
+                const errorMessage = data?.message || data?.error || 'Failed to verify OTP';
+                throw new Error(errorMessage);
+            }
+
+            const userData = data?.user || data;
+
+            if (!userData || typeof userData !== 'object') {
+                console.error('❌ Invalid user data received:', userData);
+                throw new Error('Invalid user data received from server');
+            }
+
+            if (!userData.id) {
+                console.error('❌ User data missing ID:', userData);
+                throw new Error('User data missing ID');
+            }
+
+            userData.role = role;
+
+            setUser(userData);
+            setUserRoleState(role);
+            roleRef.current = role;
+
+            await SecureStore.setItemAsync('user', JSON.stringify(userData));
+            await SecureStore.setItemAsync('userRole', role);
+
+            if (data?.accessToken) {
+                const accessToken = data.accessToken;
+                const expiryTime = data.expiresAt || (Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+                setToken(accessToken);
+                tokenRef.current = accessToken;
+                setTokenExpiry(expiryTime);
+                tokenExpiryRef.current = expiryTime;
+
+                await SecureStore.setItemAsync('token', accessToken);
+                await SecureStore.setItemAsync('tokenExpiry', String(expiryTime));
+
+                if (data.refreshToken) {
+                    setRefreshToken(data.refreshToken);
+                    refreshTokenRef.current = data.refreshToken;
+                    await SecureStore.setItemAsync('refreshToken', data.refreshToken);
+                }
+
+                scheduleTokenRefresh();
+            }
+
+            return userData;
+        } catch (error: any) {
+            console.error('❌ Verify OTP error:', error);
+            throw new Error(error.message || 'Failed to verify OTP. Please try again.');
+        }
+    };
+
+    // ============================================
+    // SET USER ROLE
+    // ============================================
+    const setUserRole = async (role: string) => {
+        if (!tokenRef.current) throw new Error('Not authenticated');
+        const roleType = role === 'mistri' ? 'mistri' : 'user';
+        const path = getAuthPath(roleType);
+        const url = `${API_URL}${path}/role`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${tokenRef.current}`,
+                },
+                body: JSON.stringify({ role }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to set user role');
+            }
+            if (data.user) {
+                data.user.role = roleType;
+                setUser(data.user);
+                setUserRoleState(roleType);
+                roleRef.current = roleType;
+                await SecureStore.setItemAsync('user', JSON.stringify(data.user));
+                await SecureStore.setItemAsync('userRole', roleType);
+            }
+        } catch (error: any) {
+            console.error('Set user role error:', error);
+            throw new Error(error.message || 'Failed to set user role');
+        }
+    };
+
+    // ============================================
+    // UPDATE PROFILE
+    // ============================================
+    const updateProfile = async (fullName: string, location?: string, avatarUrl?: string, isOnboarded?: boolean) => {
+        if (!token) throw new Error('Not authenticated');
+        const role = roleRef.current || 'user';
+        const path = getAuthPath(role);
+        const url = `${API_URL}${path}/profile`;
+
+        try {
+            const body: Record<string, string | boolean> = { fullName };
+            if (location !== undefined) body.location = location;
+            if (avatarUrl !== undefined) body.avatarUrl = avatarUrl;
+            if (isOnboarded !== undefined) body.isOnboarded = isOnboarded;
+
+            console.log('📤 Updating profile:', body);
+
+            const response = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify(body),
+            });
+            
+            const data = await response.json();
+            console.log('📥 Profile update response:', data);
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to update profile');
+            }
+            if (data.user) {
+                data.user.role = role;
+                setUser(data.user);
+                await SecureStore.setItemAsync('user', JSON.stringify(data.user));
+            }
+        } catch (error: any) {
+            console.error('Update profile error:', error);
+            throw new Error(error.message || 'Failed to update profile');
+        }
+    };
+
+    // ============================================
+    // CANCEL DELETION
+    // ============================================
+    const cancelDeletion = async (): Promise<void> => {
+        const authToken = tokenRef.current || token;
+        if (!authToken) throw new Error('Not authenticated');
+        const role = roleRef.current || 'user';
+        const path = getAuthPath(role);
+        const url = `${API_URL}${path}/cancel-deletion`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || 'Failed to cancel deletion');
+            }
+
+            const data = await response.json();
+
+            if (user) {
+                const updatedUser = {
+                    ...user,
+                    deletionScheduledAt: null,
+                    hasScheduledDeletion: false,
+                };
+                setUser(updatedUser);
+                await SecureStore.setItemAsync('user', JSON.stringify(updatedUser));
+            }
+
+            return data;
+        } catch (error) {
+            console.error('Error cancelling deletion:', error);
+            throw error;
+        }
+    };
+
+    // ============================================
+    // GET DELETION STATUS
+    // ============================================
+    const getDeletionStatus = async (): Promise<{ deletionScheduledAt: string | null } | null> => {
+        const authToken = tokenRef.current || token;
+        if (!authToken) return null;
+        const role = roleRef.current || 'user';
+        const path = getAuthPath(role);
+        const url = `${API_URL}${path}/deletion-status`;
+
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
+
+            if (!response.ok) {
+                return null;
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Error getting deletion status:', error);
+            return null;
+        }
+    };
+
+    // ============================================
+    // REFRESH ACCESS TOKEN
+    // ============================================
     const refreshAccessToken = async (): Promise<string | null> => {
         const currentRefreshToken = refreshTokenRef.current;
         if (!currentRefreshToken) return null;
+        const role = roleRef.current || 'user';
+        const path = getAuthPath(role);
+        const url = `${API_URL}${path}/refresh-token`;
 
         try {
             setIsTokenRefreshing(true);
-            const response = await fetch(`${API_URL}/api/auth/refresh-token`, {
+            console.log('🔄 Refreshing token...');
+
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ refreshToken: currentRefreshToken }),
             });
 
             if (response.status === 401 || response.status === 403) {
+                console.log('🔄 Refresh token invalid, logging out...');
                 await logout();
                 return null;
             }
 
-            if (!response.ok) return null;
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || 'Failed to refresh token');
+            }
 
             const data = await response.json();
             const newToken = data.accessToken;
             const newRefreshToken = data.refreshToken || currentRefreshToken;
             const expiryTime = data.expiresAt || (Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+            console.log('🔄 Token refreshed successfully');
 
             setToken(newToken);
             tokenRef.current = newToken;
@@ -468,137 +969,91 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
-    const verifyOtp = async (phone: string, otp: string): Promise<User> => {
-        const response = await fetch(`${API_URL}/api/auth/verify-phone`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone, otp }),
-        });
+    // ============================================
+    // GET ME / REFRESH USER
+    // ============================================
+    const getMe = async () => {
+        const authToken = tokenRef.current ?? token;
+        if (!authToken) return;
+        const role = roleRef.current || 'user';
+        const path = getAuthPath(role);
+        const url = `${API_URL}${path}/profile`;
 
-        const data = await response.json();
-        if (!response.ok) {
-            throw new Error(data.message || 'Failed to verify OTP');
-        }
-
-        if (data.user) {
-            setUser(data.user);
-            await SecureStore.setItemAsync('user', JSON.stringify(data.user));
-        }
-
-        return data.user;
-    };
-
-    const setUserRole = async (role: string) => {
-        if (!tokenRef.current) throw new Error('Not authenticated');
-        const response = await fetch(`${API_URL}/api/auth/role`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${tokenRef.current}`,
-            },
-            body: JSON.stringify({ role }),
-        });
-        const data = await response.json();
-        if (data.user) {
-            setUser(data.user);
-            await SecureStore.setItemAsync('user', JSON.stringify(data.user));
-        }
-    };
-
-    const updateProfile = async (fullName: string, location?: string) => {
-        if (!token) throw new Error('Not authenticated');
-        const body: Record<string, string> = { fullName };
-        if (location) body.location = location;
-        const response = await fetch(`${API_URL}/api/auth/profile`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(body),
-        });
-        const data = await response.json();
-        if (data.user) {
-            setUser(data.user);
-            await SecureStore.setItemAsync('user', JSON.stringify(data.user));
-        }
-    };
-
-    // ✅ Cancel account deletion
-    const cancelDeletion = async (): Promise<void> => {
-        const authToken = tokenRef.current || token;
-        if (!authToken) throw new Error('Not authenticated');
-
-        try {
-            const response = await fetch(`${API_URL}/api/auth/cancel-deletion`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${authToken}`,
-                },
+        const fetchMe = (bearer: string) =>
+            fetch(url, {
+                headers: { Authorization: `Bearer ${bearer}` },
             });
 
-            if (!response.ok) {
+        try {
+            let response = await fetchMe(authToken);
+            if (response.status === 404) {
+                await logout();
+                return;
+            }
+            if (response.ok) {
                 const data = await response.json();
-                throw new Error(data.message || 'Failed to cancel deletion');
+                const userData = data.user || data;
+                userData.role = role;
+                setUser(userData);
+                await SecureStore.setItemAsync('user', JSON.stringify(userData));
+                return;
             }
-
-            const data = await response.json();
-            
-            // ✅ Update user state
-            if (user) {
-                const updatedUser = {
-                    ...user,
-                    deletionScheduledAt: null,
-                    hasScheduledDeletion: false,
-                };
-                setUser(updatedUser);
-                await SecureStore.setItemAsync('user', JSON.stringify(updatedUser));
+            if (response.status === 401 || response.status === 403) {
+                const newToken = await refreshAccessToken();
+                if (!newToken) {
+                    await logout();
+                    return;
+                }
+                response = await fetchMe(newToken);
+                if (response.ok) {
+                    const data = await response.json();
+                    const userData = data.user || data;
+                    userData.role = role;
+                    setUser(userData);
+                    await SecureStore.setItemAsync('user', JSON.stringify(userData));
+                } else if (response.status === 404 || response.status === 401 || response.status === 403) {
+                    await logout();
+                }
             }
-
-            return data;
-        } catch (error) {
-            console.error('Error cancelling deletion:', error);
-            throw error;
+        } catch (error: any) {
+            if (__DEV__) console.error('Failed to fetch me', error);
         }
     };
 
-    // ✅ Get deletion status
-    const getDeletionStatus = async (): Promise<{ deletionScheduledAt: string | null } | null> => {
-        const authToken = tokenRef.current || token;
-        if (!authToken) return null;
-
-        try {
-            const response = await fetch(`${API_URL}/api/auth/deletion-status`, {
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                },
-            });
-
-            if (!response.ok) {
-                return null;
-            }
-
-            const data = await response.json();
-            return data;
-        } catch (error) {
-            console.error('Error getting deletion status:', error);
-            return null;
-        }
+    const refreshUser = async () => {
+        await getMe();
     };
 
+    // ============================================
+    // GET ROLE
+    // ============================================
+    const getRole = (): 'user' | 'mistri' | null => {
+        return roleRef.current;
+    };
+
+    // ============================================
+    // LOGOUT
+    // ============================================
     const logout = async () => {
+        console.log('🚪 Logging out...');
+
         if (tokenRefreshTimeout.current) {
             clearTimeout(tokenRefreshTimeout.current);
             tokenRefreshTimeout.current = null;
         }
-        if (token) {
+
+        const authToken = token;
+        const role = roleRef.current || 'user';
+        const path = getAuthPath(role);
+        const url = `${API_URL}${path}/logout`;
+
+        if (authToken) {
             try {
-                await fetch(`${API_URL}/api/auth/logout`, {
+                await fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        Authorization: `Bearer ${token}`
+                        Authorization: `Bearer ${authToken}`
                     },
                 }).catch(() => { });
             } catch (e) { }
@@ -612,57 +1067,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setTokenExpiry(null);
         tokenExpiryRef.current = null;
         setUser(null);
+        setUserRoleState(null);
+        roleRef.current = null;
 
         await SecureStore.deleteItemAsync('token');
         await SecureStore.deleteItemAsync('refreshToken');
         await SecureStore.deleteItemAsync('tokenExpiry');
         await SecureStore.deleteItemAsync('user');
-    };
-
-    const getMe = async () => {
-        const authToken = tokenRef.current ?? token;
-        if (!authToken) return;
-
-        const fetchMe = (bearer: string) =>
-            fetch(`${API_URL}/api/auth/me`, {
-                headers: { Authorization: `Bearer ${bearer}` },
-            });
-
-        try {
-            let response = await fetchMe(authToken);
-            if (response.status === 404) {
-                await logout();
-                return;
-            }
-            if (response.ok) {
-                const { user } = await response.json();
-                setUser(user);
-                await SecureStore.setItemAsync('user', JSON.stringify(user));
-                return;
-            }
-            if (response.status === 401 || response.status === 403) {
-                const newToken = await refreshAccessToken();
-                if (!tokenRef.current) return;
-                if (newToken) {
-                    response = await fetchMe(newToken);
-                    if (response.ok) {
-                        const { user } = await response.json();
-                        setUser(user);
-                        await SecureStore.setItemAsync('user', JSON.stringify(user));
-                    } else if (response.status === 404 || response.status === 401 || response.status === 403) {
-                        await logout();
-                    }
-                }
-            }
-        } catch (error: any) {
-            if (__DEV__) console.error('Failed to fetch me', error);
-        }
+        await SecureStore.deleteItemAsync('userRole');
     };
 
     useEffect(() => {
         scheduleTokenRefresh();
         return () => {
-            if (tokenRefreshTimeout.current) clearTimeout(tokenRefreshTimeout.current);
+            if (tokenRefreshTimeout.current) {
+                clearTimeout(tokenRefreshTimeout.current);
+                tokenRefreshTimeout.current = null;
+            }
         };
     }, [tokenExpiry, scheduleTokenRefresh]);
 
@@ -680,15 +1101,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             updateProfile,
             logout,
             getMe,
-            refreshUser: getMe,
+            refreshUser,
             refreshAccessToken,
-            // ✅ New functions
             cancelDeletion,
             getDeletionStatus,
+            getRole,
         }}>
             {children}
         </AuthContext.Provider>
     );
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+    const context = useContext(AuthContext);
+    if (!context) {
+        throw new Error('useAuth must be used within an AuthProvider');
+    }
+    return context;
+};

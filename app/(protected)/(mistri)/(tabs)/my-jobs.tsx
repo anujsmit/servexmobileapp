@@ -1,3 +1,5 @@
+// app/(protected)/(mistri)/my-jobs.tsx
+
 import React, { useMemo, useState, useCallback } from 'react';
 import {
     View,
@@ -23,7 +25,7 @@ import { useMistriTradeTheme } from '../../../../context/MistriTradeThemeContext
 // ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
-const safeString = (value, fallback = '') => {
+const safeString = (value: any, fallback: string = ''): string => {
     if (value === null || value === undefined) return fallback;
     if (typeof value === 'string') return value;
     try {
@@ -33,7 +35,7 @@ const safeString = (value, fallback = '') => {
     }
 };
 
-const safeCapitalize = (str) => {
+const safeCapitalize = (str: any): string => {
     try {
         const s = safeString(str, '');
         if (!s) return 'Unknown';
@@ -43,7 +45,7 @@ const safeCapitalize = (str) => {
     }
 };
 
-const formatDate = (dateStr) => {
+const formatDate = (dateStr: string | null | undefined): string => {
     if (!dateStr) return 'N/A';
     try {
         const date = new Date(dateStr);
@@ -60,9 +62,9 @@ const formatDate = (dateStr) => {
     }
 };
 
-const safeAmount = (value) => {
+const safeAmount = (value: any): string => {
     try {
-        const num = parseInt(value);
+        const num = parseFloat(String(value));
         return Number.isFinite(num) ? num.toLocaleString() : '0';
     } catch {
         return '0';
@@ -99,7 +101,18 @@ export default function MyJobsScreen() {
         enablePolling: shouldPoll 
     });
     
-    const { activeServices = [] } = useServices();
+    const { services = [] } = useServices();
+    
+    // ✅ Get unique service types from jobs
+    const serviceTypes = useMemo(() => {
+        const types = new Set<string>();
+        jobs.forEach((job: any) => {
+            if (job?.type) {
+                types.add(job.type.toLowerCase());
+            }
+        });
+        return Array.from(types);
+    }, [jobs]);
     
     const [jobFilter, setJobFilter] = useState<JobFilter>('all');
     const [filterType, setFilterType] = useState<string>('all');
@@ -182,7 +195,7 @@ export default function MyJobsScreen() {
         return '';
     }, [filteredAndSortedJobs.length, jobFilter, filterType, jobCounts]);
 
-    const getStatusColor = useCallback((status) => {
+    const getStatusColor = useCallback((status: string) => {
         switch (status) {
             case 'pending': return '#f59e0b';
             case 'assigned': return '#0284c7';
@@ -192,7 +205,7 @@ export default function MyJobsScreen() {
         }
     }, [trade?.accent]);
 
-    const getStatusBgColor = useCallback((status) => {
+    const getStatusBgColor = useCallback((status: string) => {
         switch (status) {
             case 'pending': return '#fef3c7';
             case 'assigned': return '#e0f2fe';
@@ -202,7 +215,16 @@ export default function MyJobsScreen() {
         }
     }, [trade?.accentSoft]);
 
-    const renderFilterButton = useCallback((type, label) => (
+    // ✅ Get display name for service type
+    const getServiceDisplayName = useCallback((serviceName: string) => {
+        const service = services.find((s: any) => 
+            s?.serviceName?.toLowerCase() === serviceName.toLowerCase()
+        );
+        return service?.displayName || safeCapitalize(serviceName);
+    }, [services]);
+
+    // ✅ Render filter buttons from actual service types in jobs
+    const renderFilterButton = useCallback((type: string, label: string) => (
         <TouchableOpacity
             key={type}
             style={[
@@ -224,7 +246,7 @@ export default function MyJobsScreen() {
         </TouchableOpacity>
     ), [filterType, trade?.accent]);
 
-    const renderSortButton = useCallback((order, label) => (
+    const renderSortButton = useCallback((order: SortOrder, label: string) => (
         <TouchableOpacity
             key={order}
             style={[
@@ -246,7 +268,7 @@ export default function MyJobsScreen() {
         </TouchableOpacity>
     ), [sortOrder, trade?.accent]);
 
-    const handleJobPress = useCallback((job) => {
+    const handleJobPress = useCallback((job: any) => {
         if (!job?.id) return;
         
         try {
@@ -259,14 +281,14 @@ export default function MyJobsScreen() {
         }
     }, [router]);
 
-    const renderJobItem = useCallback(({ item }) => {
+    const renderJobItem = useCallback(({ item }: { item: any }) => {
         // Safety check
         if (!item) return null;
         
         try {
             const statusColor = getStatusColor(item.status);
             const statusBgColor = getStatusBgColor(item.status);
-            const jobType = safeCapitalize(item.type);
+            const jobType = getServiceDisplayName(item.type);
             const customerName = safeString(item.customerName, 'Unknown Customer');
             const address = safeString(item.address, 'No address provided');
             const status = safeCapitalize(item.status);
@@ -360,9 +382,9 @@ export default function MyJobsScreen() {
             console.error('Error rendering job item:', error);
             return null;
         }
-    }, [getStatusColor, getStatusBgColor, handleJobPress, trade]);
+    }, [getStatusColor, getStatusBgColor, getServiceDisplayName, handleJobPress, trade]);
 
-    const keyExtractor = useCallback((item) => {
+    const keyExtractor = useCallback((item: any) => {
         return item?.id || Math.random().toString();
     }, []);
 
@@ -491,11 +513,8 @@ export default function MyJobsScreen() {
                             contentContainerStyle={styles.filterButtons}
                         >
                             {renderFilterButton('all', 'All')}
-                            {Array.isArray(activeServices) && activeServices.map(service => 
-                                service?.serviceName ? renderFilterButton(
-                                    service.serviceName.toLowerCase(),
-                                    service.displayName || service.serviceName
-                                ) : null
+                            {serviceTypes.map(type => 
+                                renderFilterButton(type, getServiceDisplayName(type))
                             )}
                         </ScrollView>
                     </View>
@@ -776,7 +795,7 @@ const styles = StyleSheet.create({
         marginBottom: 12,
         borderWidth: 1,
         borderColor: 'rgba(15, 23, 42, 0.05)',
-        ...MISTRI_ELEV.card,
+        
     },
     jobHeader: {
         flexDirection: 'row',

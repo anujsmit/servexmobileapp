@@ -1,6 +1,6 @@
 // hooks/queries.ts
 
-import { useQuery, UseQueryResult, useQueryClient, useMutation } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 
 // API base URL
@@ -20,6 +20,16 @@ export interface ServiceRequest {
     completedAt?: string;
     assignedMistriId?: string;
     unpaid: boolean;
+    startedWorkAt?: string;
+    arrivedAt?: string;
+    arrivalLat?: string;
+    arrivalLng?: string;
+    arrivalDistance?: string;
+    completionPhotos?: string[];
+    completionNote?: string;
+    durationMinutes?: number;
+    warrantyStartDate?: string;
+    warrantyEndDate?: string;
 }
 
 export type OrderStatus = 
@@ -170,7 +180,7 @@ const getOrderStatusColor = (status: string) => {
 };
 
 // ============================================
-// SERVICE REQUEST HOOKS
+// CUSTOMER SERVICE REQUEST HOOKS
 // ============================================
 
 /**
@@ -179,7 +189,8 @@ const getOrderStatusColor = (status: string) => {
 const fetchCustomerRequests = async (): Promise<ServiceRequest[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests`, {
+    
+    const response = await fetch(`${API_URL}/api/users/service-requests`, {
         headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
@@ -206,12 +217,13 @@ export const useCustomerRequestsQuery = () => {
 };
 
 /**
- * Fetch mistri job list (unassigned service requests)
+ * Fetch pending service requests for mistri
  */
-const fetchMistriJobs = async (): Promise<ServiceRequest[]> => {
+const fetchMistriPendingJobs = async (): Promise<ServiceRequest[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/pending`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/pending`, {
         headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
@@ -222,17 +234,20 @@ const fetchMistriJobs = async (): Promise<ServiceRequest[]> => {
     return data.requests as ServiceRequest[];
 };
 
-export const useMistriJobsQuery = () => {
+export const useMistriPendingJobsQuery = () => {
     return useQuery({
-        queryKey: ['mistriJobs'],
-        queryFn: fetchMistriJobs,
+        queryKey: ['mistriPendingJobs'],
+        queryFn: fetchMistriPendingJobs,
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 };
 
+// Keep the old name for backward compatibility
+export const useMistriJobsQuery = useMistriPendingJobsQuery;
+
 /**
- * Create a new service request
+ * Create a new service request (customer)
  */
 const createServiceRequest = async (requestBody: {
     type: string;
@@ -245,7 +260,8 @@ const createServiceRequest = async (requestBody: {
 }): Promise<{ requestId: string; status: string }> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests`, {
+    
+    const response = await fetch(`${API_URL}/api/users/service-requests`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(requestBody),
@@ -280,18 +296,19 @@ export const useCreateServiceRequest = () => {
                 return [newReq, ...existing];
             });
             queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
-            queryClient.invalidateQueries({ queryKey: ['mistriJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
         },
     });
 };
 
 /**
- * Cancel a service request
+ * Cancel a service request (customer)
  */
 const cancelServiceRequest = async (id: string): Promise<void> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}/cancel`, {
+    
+    const response = await fetch(`${API_URL}/api/users/service-requests/${id}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
@@ -306,7 +323,7 @@ export const useCancelServiceRequest = () => {
         mutationFn: cancelServiceRequest,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
-            queryClient.invalidateQueries({ queryKey: ['mistriJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
             queryClient.invalidateQueries({ queryKey: ['targetedRequests'] });
         },
     });
@@ -351,7 +368,8 @@ export interface ServiceRequestResponse {
 const fetchServiceRequestById = async (id: string): Promise<ServiceRequestResponse> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}`, {
+    
+    const response = await fetch(`${API_URL}/api/users/service-requests/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
@@ -425,6 +443,10 @@ export const useNearbyMistrisQuery = (customerLocation: { lat: number; lng: numb
     });
 };
 
+// ============================================
+// MISTRI SPECIFIC HOOKS
+// ============================================
+
 // ---- Targeted Requests (for mistris) ----
 export interface TargetedRequest {
     id: string;
@@ -444,7 +466,7 @@ const fetchTargetedRequests = async (): Promise<TargetedRequest[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
 
-    const response = await fetch(`${API_URL}/api/mistri/targeted-requests`, {
+    const response = await fetch(`${API_URL}/api/mistri/requests/targeted`, {
         headers: {
             'Authorization': `Bearer ${token}`
         },
@@ -483,13 +505,14 @@ export interface MistriJob {
     customerName: string;
     customerId: string;
     unpaid: boolean;
+    paymentAmount?: string;
 }
 
 const fetchMistriAcceptedJobs = async (): Promise<MistriJob[]> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
 
-    const response = await fetch(`${API_URL}/api/mistri/accepted-jobs`, {
+    const response = await fetch(`${API_URL}/api/mistri/requests/accepted-jobs`, {
         headers: {
             'Authorization': `Bearer ${token}`
         },
@@ -593,11 +616,53 @@ export const useUpdateMistriProfile = () => {
     });
 };
 
-// ---- Complete Service Request ----
+// ---- Create Mistri Profile (Onboarding) ----
+const createMistriProfileApi = async (profileData: {
+    serviceId: number;
+    profilePhotoBase64: string;
+    currentLocation: string;
+    fullName: string;
+    bio?: string;
+    experienceLevel?: 'beginner' | 'intermediate' | 'expert';
+    govtIdType?: string;
+    govtIdFrontBase64?: string;
+    govtIdBackBase64?: string;
+}): Promise<{ success: boolean; message: string; profile: MistriProfile }> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/mistri/profile`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(profileData),
+    });
+    
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to create mistri profile');
+    }
+    return await response.json();
+};
+
+export const useCreateMistriProfile = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: createMistriProfileApi,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['mistriProfile'] });
+        },
+    });
+};
+
+// ---- Complete Service Request (Legacy - Mistri) ----
 const completeServiceRequestApi = async (id: string): Promise<void> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}/complete`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
@@ -613,18 +678,19 @@ export const useCompleteServiceRequest = () => {
         mutationFn: completeServiceRequestApi,
         onSuccess: (_data, id) => {
             queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
-            queryClient.invalidateQueries({ queryKey: ['mistriJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
             queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
             queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
         },
     });
 };
 
-// ---- Toggle Unpaid Status ----
+// ---- Toggle Unpaid Status (Mistri) ----
 const toggleUnpaidApi = async (id: string): Promise<void> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}/toggle-unpaid`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/toggle-unpaid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
@@ -640,18 +706,19 @@ export const useToggleUnpaid = () => {
         mutationFn: toggleUnpaidApi,
         onSuccess: (_data, id) => {
             queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
-            queryClient.invalidateQueries({ queryKey: ['mistriJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
             queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
             queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
         },
     });
 };
 
-// ---- Accept Service Request ----
+// ---- Accept Service Request (Mistri) ----
 const acceptServiceRequestApi = async (id: string): Promise<void> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}/accept`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
@@ -668,17 +735,19 @@ export const useAcceptServiceRequest = () => {
         onSuccess: (_data, id) => {
             queryClient.invalidateQueries({ queryKey: ['targetedRequests'] });
             queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
             queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
             queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
         },
     });
 };
 
-// ---- Decline Service Request ----
+// ---- Decline Service Request (Mistri) ----
 const declineServiceRequestApi = async (id: string): Promise<void> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}/decline`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/decline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
@@ -694,16 +763,55 @@ export const useDeclineServiceRequest = () => {
         mutationFn: declineServiceRequestApi,
         onSuccess: (_data, id) => {
             queryClient.invalidateQueries({ queryKey: ['targetedRequests'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
             queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
         },
     });
 };
 
-// ---- Start Work ----
+// ---- Mark Job as Paid (Mistri) ----
+const markJobAsPaidApi = async (id: string): Promise<{
+    success: boolean;
+    message: string;
+    isPaid: boolean;
+    paidAt?: string;
+    amount?: number;
+}> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/mark-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to mark job as paid');
+    }
+    return await response.json();
+};
+
+export const useMarkJobAsPaid = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: markJobAsPaidApi,
+        onSuccess: (_data, id) => {
+            queryClient.invalidateQueries({ queryKey: ['earnings'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
+        },
+    });
+};
+
+// ============================================
+// MISTRI MUTATIONS - START WORK
+// ============================================
+
 const startWorkApi = async (id: string): Promise<void> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}/start-work`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/start-work`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
@@ -720,283 +828,160 @@ export const useStartWork = () => {
         onSuccess: (_data, id) => {
             queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
             queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
+            queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['targetedRequests'] });
         },
     });
 };
 
-// ---- Notifications ----
-export interface Notification {
-    id: string;
-    userId: string;
-    title: string;
-    message: string;
-    type: string;
-    relatedRequestId?: string;
-    isRead: boolean;
-    createdAt: string;
-}
+// ============================================
+// MISTRI MUTATIONS - MARK ARRIVED
+// ============================================
 
-const fetchNotifications = async (): Promise<{ notifications: Notification[]; unreadCount: number }> => {
+const markArrivedApi = async (id: string, coords?: { lat: number; lng: number }): Promise<{ request: any; distance: number }> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/notifications`, {
-        headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to fetch notifications');
-    }
-    const data = await response.json();
-    return { notifications: data.notifications, unreadCount: data.unreadCount };
-};
-
-export const useNotificationsQuery = () => {
-    return useQuery({
-        queryKey: ['notifications'],
-        queryFn: fetchNotifications,
-        refetchInterval: 5000,
-        refetchOnWindowFocus: true,
-    });
-};
-
-const markNotificationAsReadApi = async (id: string): Promise<void> => {
-    const token = await SecureStore.getItemAsync('token');
-    if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/notifications/${id}/read`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/arrive`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ lat: coords?.lat, lng: coords?.lng }),
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to mark notification as read');
-    }
-};
-
-export const useMarkNotificationAsRead = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: markNotificationAsReadApi,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['notifications'] });
-        },
-    });
-};
-
-const markAllNotificationsAsReadApi = async (): Promise<void> => {
-    const token = await SecureStore.getItemAsync('token');
-    if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/notifications/read-all`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to mark all notifications as read');
-    }
-};
-
-export const useMarkAllNotificationsAsRead = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: markAllNotificationsAsReadApi,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['notifications'] });
-        },
-    });
-};
-
-// ========================================
-// PLATFORM SERVICES
-// ========================================
-
-export interface PlatformService {
-    id: string;
-    name: string;
-    description?: string;
-    price: string;
-    imageUrl?: string;
-}
-
-export interface PlatformServiceCategory {
-    categoryId: number;
-    categoryName: string;
-    services: PlatformService[];
-}
-
-const fetchPlatformServices = async (): Promise<PlatformServiceCategory[]> => {
-    const token = await SecureStore.getItemAsync('token');
-    if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/platform-services`, {
-        headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to fetch platform services');
+        throw new Error(err.message || 'Failed to mark arrival');
     }
     const data = await response.json();
-    return data.categories as PlatformServiceCategory[];
+    return data;
 };
 
-export const usePlatformServicesQuery = () => {
-    return useQuery({
-        queryKey: ['platformServices'],
-        queryFn: fetchPlatformServices,
-        staleTime: 10 * 60 * 1000,
-        refetchOnWindowFocus: false,
-    });
-};
-
-// ========================================
-// RATINGS
-// ========================================
-
-export interface Rating {
-    id: string;
-    serviceRequestId: string;
-    customerId: string;
-    mistriId: string;
-    rating: number;
-    review?: string;
-    createdAt: string;
-    updatedAt: string;
-}
-
-export interface RatingWithCustomer {
-    id: string;
-    rating: number;
-    review?: string;
-    createdAt: string;
-    customerName: string;
-}
-
-const createRatingApi = async (ratingData: {
-    serviceRequestId: string;
-    rating: number;
-    review?: string;
-}): Promise<Rating> => {
-    const token = await SecureStore.getItemAsync('token');
-    if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/ratings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(ratingData),
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to create rating');
-    }
-    const data = await response.json();
-    return data.rating as Rating;
-};
-
-export const useCreateRating = () => {
+export const useMarkArrived = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: createRatingApi,
-        onSuccess: (data) => {
-            queryClient.invalidateQueries({ queryKey: ['ratings', data.mistriId] });
-            queryClient.invalidateQueries({ queryKey: ['mistriProfile'] });
-            queryClient.invalidateQueries({ queryKey: ['serviceRequest', data.serviceRequestId] });
-            queryClient.invalidateQueries({ queryKey: ['ratingStatus', data.serviceRequestId] });
+        mutationFn: ({ id, coords }: { id: string; coords?: { lat: number; lng: number } }) =>
+            markArrivedApi(id, coords),
+        onSuccess: (_data, { id }) => {
+            queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
+            queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['targetedRequests'] });
         },
     });
 };
 
-const fetchMistriRatings = async (mistriId: string): Promise<{
-    ratings: RatingWithCustomer[];
-    averageRating: number;
-    totalRatings: number;
+// ============================================
+// MISTRI MUTATIONS - COMPLETE WITH PHOTOS
+// ============================================
+
+const completeJobWithPhotosApi = async (id: string, photos: string[], note: string): Promise<{
+    request: any;
+    photos: string[];
+    warranty: { startDate: string; endDate: string; durationDays: number };
 }> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/ratings/mistri/${mistriId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/complete-with-photos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ photos, note }),
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to fetch ratings');
+        throw new Error(err.message || 'Failed to complete job');
     }
-    const data = await response.json();
-    return {
-        ratings: data.ratings,
-        averageRating: data.averageRating,
-        totalRatings: data.totalRatings,
-    };
+    return await response.json();
 };
 
-export const useMistriRatingsQuery = (mistriId: string | null) => {
-    return useQuery({
-        queryKey: ['ratings', mistriId],
-        queryFn: () => fetchMistriRatings(mistriId!),
-        enabled: !!mistriId,
-        staleTime: 5 * 60 * 1000,
-        refetchOnWindowFocus: true,
+export const useCompleteJobWithPhotos = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, photos, note }: { id: string; photos: string[]; note: string }) =>
+            completeJobWithPhotosApi(id, photos, note),
+        onSuccess: (_data, { id }) => {
+            queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['mistriPendingJobs'] });
+            queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
+            queryClient.invalidateQueries({ queryKey: ['customerRequests'] });
+            queryClient.invalidateQueries({ queryKey: ['earnings'] });
+            queryClient.invalidateQueries({ queryKey: ['completionPhotos', id] });
+            queryClient.invalidateQueries({ queryKey: ['warrantyStatus', id] });
+        },
     });
 };
 
-const fetchMyRatings = async (): Promise<{
-    ratings: (Rating & { requestId: string; customerName: string })[];
-    averageRating: number;
-    totalRatings: number;
+// ============================================
+// MISTRI QUERIES - GET COMPLETION PHOTOS
+// ============================================
+
+const fetchCompletionPhotos = async (id: string): Promise<{
+    photos: string[];
+    warranty: { startDate: string; endDate: string; isActive: boolean } | null;
+    note: string | null;
 }> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/ratings/my`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/photos`, {
         headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to fetch ratings');
+        throw new Error(err.message || 'Failed to fetch photos');
     }
-    const data = await response.json();
-    return {
-        ratings: data.ratings,
-        averageRating: data.averageRating,
-        totalRatings: data.totalRatings,
-    };
+    return await response.json();
 };
 
-export const useMistriReceivedRatingsQuery = () => {
+export const useCompletionPhotosQuery = (id: string | null) => {
     return useQuery({
-        queryKey: ['myRatings'],
-        queryFn: fetchMyRatings,
-        staleTime: 5 * 60 * 1000,
-        refetchOnWindowFocus: true,
-    });
-};
-
-const checkIfRated = async (serviceRequestId: string): Promise<{
-    isRated: boolean;
-    rating: Rating | null;
-}> => {
-    const token = await SecureStore.getItemAsync('token');
-    if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/ratings/check/${serviceRequestId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to check rating status');
-    }
-    const data = await response.json();
-    return {
-        isRated: data.isRated,
-        rating: data.rating,
-    };
-};
-
-export const useRatingStatusQuery = (serviceRequestId: string | null) => {
-    return useQuery({
-        queryKey: ['ratingStatus', serviceRequestId],
-        queryFn: () => checkIfRated(serviceRequestId!),
-        enabled: !!serviceRequestId,
+        queryKey: ['completionPhotos', id],
+        queryFn: () => fetchCompletionPhotos(id!),
+        enabled: !!id,
         staleTime: 5 * 60 * 1000,
     });
 };
 
-// ========================================
-// EARNINGS
-// ========================================
+// ============================================
+// MISTRI QUERIES - GET WARRANTY STATUS
+// ============================================
+
+const fetchWarrantyStatus = async (id: string): Promise<{
+    warranty: {
+        hasWarranty: boolean;
+        startDate: string | null;
+        endDate: string | null;
+        isActive: boolean;
+        daysRemaining: number;
+        totalDays: number;
+    };
+    photos: string[];
+}> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/mistri/requests/${id}/warranty`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to fetch warranty status');
+    }
+    return await response.json();
+};
+
+export const useWarrantyStatusQuery = (id: string | null) => {
+    return useQuery({
+        queryKey: ['warrantyStatus', id],
+        queryFn: () => fetchWarrantyStatus(id!),
+        enabled: !!id,
+        staleTime: 5 * 60 * 1000,
+        refetchInterval: 60000, // Refresh every minute to update days remaining
+    });
+};
+
+// ============================================
+// EARNINGS (Mistri)
+// ============================================
 
 export interface EarningsJob {
     id: string;
@@ -1045,7 +1030,8 @@ export interface EarningsResponse {
 const fetchEarnings = async (period: string = 'month', page: number = 1, limit: number = 20): Promise<EarningsResponse> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/earnings?period=${period}&page=${page}&limit=${limit}`, {
+    
+    const response = await fetch(`${API_URL}/api/mistri/jobs/earnings?period=${period}&page=${page}&limit=${limit}`, {
         headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
@@ -1065,41 +1051,293 @@ export const useEarningsQuery = (period: string = 'month', page: number = 1, lim
     });
 };
 
-const markJobAsPaidApi = async (id: string): Promise<{
-    success: boolean;
+// ============================================
+// NOTIFICATIONS (Customer/Mistri)
+// ============================================
+
+export interface Notification {
+    id: string;
+    userId: string;
+    title: string;
     message: string;
-    isPaid: boolean;
-    paidAt?: string;
-    amount?: number;
-}> => {
+    type: string;
+    relatedRequestId?: string;
+    isRead: boolean;
+    createdAt: string;
+}
+
+const fetchNotifications = async (): Promise<{ notifications: Notification[]; unreadCount: number }> => {
     const token = await SecureStore.getItemAsync('token');
     if (!token) throw new Error('Not authenticated');
-    const response = await fetch(`${API_URL}/api/service-requests/${id}/mark-paid`, {
+    
+    const response = await fetch(`${API_URL}/api/users/notifications`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to fetch notifications');
+    }
+    const data = await response.json();
+    return { notifications: data.notifications, unreadCount: data.unreadCount };
+};
+
+export const useNotificationsQuery = () => {
+    return useQuery({
+        queryKey: ['notifications'],
+        queryFn: fetchNotifications,
+        refetchInterval: 5000,
+        refetchOnWindowFocus: true,
+    });
+};
+
+const markNotificationAsReadApi = async (id: string): Promise<void> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/users/notifications/${id}/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to mark job as paid');
+        throw new Error(err.message || 'Failed to mark notification as read');
     }
-    return await response.json();
 };
 
-export const useMarkJobAsPaid = () => {
+export const useMarkNotificationAsRead = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: markJobAsPaidApi,
-        onSuccess: (_data, id) => {
-            queryClient.invalidateQueries({ queryKey: ['earnings'] });
-            queryClient.invalidateQueries({ queryKey: ['mistriAcceptedJobs'] });
-            queryClient.invalidateQueries({ queryKey: ['serviceRequest', id] });
+        mutationFn: markNotificationAsReadApi,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['notifications'] });
         },
     });
 };
 
-// ========================================
-// ORDER HOOKS
-// ========================================
+const markAllNotificationsAsReadApi = async (): Promise<void> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/users/notifications/read-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to mark all notifications as read');
+    }
+};
+
+export const useMarkAllNotificationsAsRead = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: markAllNotificationsAsReadApi,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['notifications'] });
+        },
+    });
+};
+
+// ============================================
+// RATINGS
+// ============================================
+
+export interface Rating {
+    id: string;
+    serviceRequestId: string;
+    customerId: string;
+    mistriId: string;
+    rating: number;
+    review?: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface RatingWithCustomer {
+    id: string;
+    rating: number;
+    review?: string;
+    createdAt: string;
+    customerName: string;
+}
+
+// ---- Create Rating (Customer) ----
+const createRatingApi = async (ratingData: {
+    serviceRequestId: string;
+    rating: number;
+    review?: string;
+}): Promise<Rating> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/users/ratings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(ratingData),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to create rating');
+    }
+    const data = await response.json();
+    return data.rating as Rating;
+};
+
+export const useCreateRating = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: createRatingApi,
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ['ratings', data.mistriId] });
+            queryClient.invalidateQueries({ queryKey: ['mistriProfile'] });
+            queryClient.invalidateQueries({ queryKey: ['serviceRequest', data.serviceRequestId] });
+            queryClient.invalidateQueries({ queryKey: ['ratingStatus', data.serviceRequestId] });
+        },
+    });
+};
+
+// ---- Check if Rated (Customer) ----
+const checkIfRated = async (serviceRequestId: string): Promise<{
+    isRated: boolean;
+    rating: Rating | null;
+}> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/users/ratings/check/${serviceRequestId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to check rating status');
+    }
+    const data = await response.json();
+    return {
+        isRated: data.isRated,
+        rating: data.rating,
+    };
+};
+
+export const useRatingStatusQuery = (serviceRequestId: string | null) => {
+    return useQuery({
+        queryKey: ['ratingStatus', serviceRequestId],
+        queryFn: () => checkIfRated(serviceRequestId!),
+        enabled: !!serviceRequestId,
+        staleTime: 5 * 60 * 1000,
+    });
+};
+
+// ---- Fetch Mistri Ratings (Public) ----
+const fetchMistriRatings = async (mistriId: string): Promise<{
+    ratings: RatingWithCustomer[];
+    averageRating: number;
+    totalRatings: number;
+}> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/mistri/ratings/${mistriId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to fetch ratings');
+    }
+    const data = await response.json();
+    return {
+        ratings: data.ratings,
+        averageRating: data.averageRating,
+        totalRatings: data.totalRatings,
+    };
+};
+
+export const useMistriRatingsQuery = (mistriId: string | null) => {
+    return useQuery({
+        queryKey: ['ratings', mistriId],
+        queryFn: () => fetchMistriRatings(mistriId!),
+        enabled: !!mistriId,
+        staleTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: true,
+    });
+};
+
+// ---- Fetch My Ratings (Mistri) ----
+const fetchMyRatings = async (): Promise<{
+    ratings: (Rating & { requestId: string; customerName: string })[];
+    averageRating: number;
+    totalRatings: number;
+}> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    
+    const response = await fetch(`${API_URL}/api/mistri/ratings/my`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to fetch ratings');
+    }
+    const data = await response.json();
+    return {
+        ratings: data.ratings,
+        averageRating: data.averageRating,
+        totalRatings: data.totalRatings,
+    };
+};
+
+export const useMistriReceivedRatingsQuery = () => {
+    return useQuery({
+        queryKey: ['myRatings'],
+        queryFn: fetchMyRatings,
+        staleTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: true,
+    });
+};
+
+// ============================================
+// PLATFORM SERVICES
+// ============================================
+
+export interface PlatformService {
+    id: string;
+    name: string;
+    description?: string;
+    price: string;
+    imageUrl?: string;
+}
+
+export interface PlatformServiceCategory {
+    categoryId: number;
+    categoryName: string;
+    services: PlatformService[];
+}
+
+const fetchPlatformServices = async (): Promise<PlatformServiceCategory[]> => {
+    const token = await SecureStore.getItemAsync('token');
+    if (!token) throw new Error('Not authenticated');
+    const response = await fetch(`${API_URL}/api/platform-services`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Failed to fetch platform services');
+    }
+    const data = await response.json();
+    return data.categories as PlatformServiceCategory[];
+};
+
+export const usePlatformServicesQuery = () => {
+    return useQuery({
+        queryKey: ['platformServices'],
+        queryFn: fetchPlatformServices,
+        staleTime: 10 * 60 * 1000,
+        refetchOnWindowFocus: false,
+    });
+};
+
+// ============================================
+// ORDER HOOKS (Customer)
+// ============================================
 
 /**
  * Fetch customer orders
@@ -1292,9 +1530,9 @@ export const useOrderCountsQuery = () => {
     });
 };
 
-// ========================================
-// COMBINED REQUESTS HOOK
-// ========================================
+// ============================================
+// COMBINED REQUESTS HOOK (Customer)
+// ============================================
 
 export const useCombinedRequests = (statusFilter?: string) => {
     const { data: serviceRequests = [], isLoading: isLoadingService } = useCustomerRequestsQuery();

@@ -38,7 +38,7 @@ export default function BookServiceScreen() {
 
     setLoading(true);
     try {
-      const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/service-requests`, {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/users/service-requests`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

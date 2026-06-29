@@ -87,7 +87,7 @@ const getCurrentNepaliDate = (): string => {
     return `${year}-${month}-${day}`;
 };
 
-// Format Nepali date for display (e.g., "2060-04-28" -> "Bhadra 28, 2060 BS")
+// Format Nepali date for display
 const formatDisplayDate = (dateStr: string): string => {
     if (!dateStr) return '';
     try {
@@ -135,11 +135,9 @@ const getDaysInMonth = (month: number, year: number): number => {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Date Picker Modal - redesigned as a bottom sheet with a centered "wheel"
-// highlight, tap-to-select, drag-to-snap, and auto-scroll to the current
-// selection when it opens.
-// ---------------------------------------------------------------------------
+// ============================================
+// Date Picker Modal
+// ============================================
 const DatePickerModal = ({
     visible,
     onClose,
@@ -476,8 +474,7 @@ export default function LoginScreen() {
     const [showPassword, setShowPassword] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [focusedField, setFocusedField] = useState<FieldName | null>(null);
-    
-    // ✅ Deletion prompt state
+
     const [showDeletionPrompt, setShowDeletionPrompt] = useState(false);
     const [deletionDate, setDeletionDate] = useState<string | null>(null);
     const [isCancellingDeletion, setIsCancellingDeletion] = useState(false);
@@ -530,10 +527,6 @@ export default function LoginScreen() {
         });
     };
 
-    // BUG FIX: the original regex `[6-9]\d{9}` accepted any 10-digit number
-    // starting with 6-9, including numbers starting with "6" or plain "7"
-    // which Nepali mobile numbers never do - they're all 10 digits
-    // starting with "9" (96/97/98xxxxxxxx).
     const validatePhone = (phoneNumber: string): boolean => {
         return /^9[6-8]\d{8}$/.test(phoneNumber);
     };
@@ -594,8 +587,7 @@ export default function LoginScreen() {
             setIsCancellingDeletion(true);
             await cancelDeletion();
             setShowDeletionPrompt(false);
-            
-            // Show success message
+
             Alert.alert(
                 'Deletion Cancelled',
                 'Your account deletion has been cancelled. You can continue using ServeX.',
@@ -603,27 +595,7 @@ export default function LoginScreen() {
                     {
                         text: 'Continue',
                         onPress: () => {
-                            // Navigate to dashboard based on role
-                            const userRole = user?.role;
-                            if (userRole === 'mistri') {
-                                const isOnboarded = user?.isOnboarded;
-                                const approvalStatus = user?.approvalStatus;
-                                
-                                if (!isOnboarded) {
-                                    router.replace('/onboarding/mistri');
-                                } else if (approvalStatus !== 'approved') {
-                                    router.replace('/pending-approval');
-                                } else {
-                                    router.replace('/(protected)/(mistri)');
-                                }
-                            } else {
-                                const isOnboarded = user?.isOnboarded;
-                                if (!isOnboarded) {
-                                    router.replace('/onboarding/customer');
-                                } else {
-                                    router.replace('/(protected)/(customer)');
-                                }
-                            }
+                            navigateToDashboard(user);
                         },
                     },
                 ]
@@ -642,103 +614,146 @@ export default function LoginScreen() {
     const handleLogoutFromDeletion = async () => {
         await logout();
         setShowDeletionPrompt(false);
-        // Stay on login screen
         showToast('info', 'Logged Out', 'You have been logged out');
     };
+    // In login.tsx - Replace the navigateToDashboard function
 
-    const handleContinue = async () => {
-        if (!validateForm()) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            triggerShake();
+    const navigateToDashboard = (userData: any) => {
+        if (!userData) {
+            router.replace('/');
             return;
         }
 
-        setIsSubmitting(true);
+        // Get user properties (handle both camelCase and snake_case)
+        const userRole = userData.role || userData.accountType || 'user';
+        const isOnboarded = userData.isOnboarded || userData.is_onboarded || false;
+        const approvalStatus = userData.approvalStatus || userData.approval_status || null;
 
-        try {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        console.log('🔍 Navigating user:', { userRole, isOnboarded, approvalStatus });
 
-            if (mode === 'signup') {
-                await register({
+        // ✅ Check if user is a mistri first
+        if (userRole === 'mistri' || userRole === 'Mistri' || userRole === 'provider') {
+            // ✅ If not onboarded, go to mistri onboarding
+            if (!isOnboarded) {
+                console.log('🔍 Mistri not onboarded, going to mistri onboarding');
+                router.replace('/onboarding/mistri');
+                return;
+            }
+
+            // ✅ If pending approval, go to pending approval page
+            if (approvalStatus !== 'approved') {
+                console.log('🔍 Mistri pending approval');
+                router.replace('/pending-approval');
+                return;
+            }
+
+            // ✅ If approved, go to mistri dashboard
+            console.log('🔍 Mistri approved, going to dashboard');
+            router.replace('/(protected)/(mistri)');
+            return;
+        }
+
+        // ✅ Handle user/customer role
+        if (userRole === 'user' || userRole === 'User' || userRole === 'customer') {
+            // ✅ If not onboarded, go to customer onboarding
+            if (!isOnboarded) {
+                console.log('🔍 Customer not onboarded, going to customer onboarding');
+                router.replace('/onboarding/customer');
+                return;
+            }
+
+            // ✅ If onboarded, go to customer dashboard
+            console.log('🔍 Customer onboarded, going to dashboard');
+            router.replace('/(protected)/(customer)');
+            return;
+        }
+
+        // ✅ Fallback
+        console.log('🔍 Unknown role, going to home');
+        router.replace('/');
+    };
+
+const handleContinue = async () => {
+    if (!validateForm()) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        triggerShake();
+        return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+        if (mode === 'signup') {
+            await register({
+                phone: formData.phone,
+                fullName: formData.name.trim(),
+                password: formData.password,
+                dob: formData.dob,
+                role,  // ✅ role is passed correctly here
+            });
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            showToast('success', 'Registration Successful', 'Please verify your phone number with OTP');
+
+            // ✅ Pass the role to verify-otp screen
+            router.push({
+                pathname: '/verify-otp',
+                params: {
                     phone: formData.phone,
-                    fullName: formData.name.trim(),
-                    password: formData.password,
-                    dob: formData.dob,
-                    role,
-                });
+                    role,  // ✅ Pass role (user or mistri)
+                    mode: 'signup',
+                    name: formData.name.trim(),
+                },
+            });
+        } else {
+            // ✅ Pass the role to loginWithPassword
+            const response = await loginWithPassword(formData.phone, formData.password, role);
 
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                showToast('success', 'Registration Successful', 'Please verify your phone number with OTP');
+            // Check if account has scheduled deletion
+            if (response?.requiresDeletionAction && response?.deletionScheduledAt) {
+                setDeletionDate(response.deletionScheduledAt);
+                setShowDeletionPrompt(true);
+                setIsSubmitting(false);
+                return;
+            }
 
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+            if (response?.isVerified === false || response?.user?.isVerified === false) {
+                showToast('info', 'Verification Required', 'Please verify your phone number first');
                 router.push({
                     pathname: '/verify-otp',
                     params: {
                         phone: formData.phone,
-                        role,
-                        mode: 'signup',
-                        name: formData.name.trim(),
+                        role,  // ✅ Pass role (user or mistri)
+                        mode: 'login',
+                        requiresVerification: 'true',
                     },
                 });
-            } else {
-                const response = await loginWithPassword(formData.phone, formData.password);
-                
-                // ✅ Check if account has scheduled deletion
-                if (response?.requiresDeletionAction && response?.deletionScheduledAt) {
-                    setDeletionDate(response.deletionScheduledAt);
-                    setShowDeletionPrompt(true);
-                    setIsSubmitting(false);
-                    return;
-                }
-
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-                if (response?.isVerified === false || response?.user?.isVerified === false) {
-                    showToast('info', 'Verification Required', 'Please verify your phone number first');
-                    router.push({
-                        pathname: '/verify-otp',
-                        params: {
-                            phone: formData.phone,
-                            role,
-                            mode: 'login',
-                        },
-                    });
-                    return;
-                }
-
-                if (response?.user) {
-                    showToast('success', 'Welcome Back!', `Hello ${response.user.fullName}`);
-
-                    const userRole = response.user.role;
-                    const isOnboarded = response.user.isOnboarded || response.user.is_onboarded;
-                    const approvalStatus = response.user.approvalStatus || response.user.approval_status;
-
-                    if (userRole === 'mistri') {
-                        if (!isOnboarded) {
-                            router.replace('/onboarding/mistri');
-                        } else if (approvalStatus !== 'approved') {
-                            router.replace('/pending-approval');
-                        } else {
-                            router.replace('/(protected)/(mistri)');
-                        }
-                    } else if (userRole === 'user') {
-                        if (!isOnboarded) {
-                            router.replace('/onboarding/customer');
-                        } else {
-                            router.replace('/(protected)/(customer)');
-                        }
-                    } else {
-                        router.replace('/');
-                    }
-                }
+                return;
             }
-        } catch (error: any) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            showToast('error', 'Authentication Failed', error?.message || 'Please try again');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
 
+            if (response?.user) {
+                showToast('success', 'Welcome Back!', `Hello ${response.user.fullName}`);
+                navigateToDashboard(response.user);
+            }
+        }
+    } catch (error: any) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        console.error('Login error:', error);
+
+        // Handle rate limiting (429) specifically
+        if (error?.message?.includes('429') || error?.message?.includes('too many')) {
+            showToast('error', 'Too Many Attempts', 'Please wait a few minutes before trying again');
+        } else {
+            showToast('error', 'Authentication Failed', error?.message || 'Please try again');
+        }
+    } finally {
+        setIsSubmitting(false);
+    }
+};
     const isLoading = isSubmitting || authLoading;
 
     const switchContainerWidth = width - 48;
@@ -752,15 +767,15 @@ export default function LoginScreen() {
     const focusStyle = (field: FieldName) =>
         focusedField === field
             ? {
-                  borderColor: config.accent,
-                  borderWidth: 1.5,
-                  backgroundColor: '#fff',
-                  shadowColor: config.accent,
-                  shadowOpacity: 0.12,
-                  shadowRadius: 6,
-                  shadowOffset: { width: 0, height: 2 },
-                  elevation: 2,
-              }
+                borderColor: config.accent,
+                borderWidth: 1.5,
+                backgroundColor: '#fff',
+                shadowColor: config.accent,
+                shadowOpacity: 0.12,
+                shadowRadius: 6,
+                shadowOffset: { width: 0, height: 2 },
+                elevation: 2,
+            }
             : null;
 
     const onPressInButton = () => {
@@ -1063,7 +1078,7 @@ export default function LoginScreen() {
                     accentColor={config.accent}
                 />
 
-                {/* ✅ Deletion Prompt Modal */}
+                {/* Deletion Prompt Modal */}
                 <DeletionPromptModal
                     visible={showDeletionPrompt}
                     deletionDate={deletionDate}
@@ -1311,7 +1326,6 @@ const styles = StyleSheet.create({
         color: '#666',
         fontSize: 14,
     },
-    // ---- Date picker bottom sheet ----
     modalBackdrop: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1441,5 +1455,8 @@ const styles = StyleSheet.create({
     sheetButtonConfirmText: {
         color: '#fff',
         fontWeight: '600',
+    },
+    disabledOpacity: {
+        opacity: 0.5,
     },
 });

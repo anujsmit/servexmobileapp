@@ -1,3 +1,4 @@
+// app/(protected)/(customer)/request-details.tsx
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -8,23 +9,30 @@ import {
     Alert,
     Linking,
     Image,
+    TextInput, 
     ScrollView,
+    Modal,
+    FlatList,
+    Dimensions,
 } from 'react-native';
 import { SafeAreaContainer } from '../../../../components/SafeAreaContainer';
 import { PageTitle } from '../../../../components/PageTitle';
-import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons, Feather } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
     useServiceRequestQuery,
     useCancelServiceRequest,
     useRatingStatusQuery,
-    useCreateRating
+    useCreateRating,
+    useCompletionPhotosQuery,
 } from '../../../../hooks/queries';
 import { useServices } from '../../../../context/ServicesContext';
 import { RatingStars } from '../../../../components/RatingStars';
-import { RatingModal } from '../../../../components/RatingModal';
+import { LinearGradient } from 'expo-linear-gradient';
 
-// Dashed line component since RN doesn't support borderStyle: 'dashed' on individual borders
+const { width, height } = Dimensions.get('window');
+
+// Dashed line component
 const DashedLine = ({ style }: { style?: object }) => (
     <View style={[{ flexDirection: 'row', overflow: 'hidden', marginHorizontal: -16 }, style]}>
         {Array.from({ length: 50 }).map((_, i) => (
@@ -33,6 +41,253 @@ const DashedLine = ({ style }: { style?: object }) => (
     </View>
 );
 
+// ---------------------------------------------------------------------------
+// IMAGE VIEWER MODAL
+// ---------------------------------------------------------------------------
+const ImageViewerModal = ({ 
+    visible, 
+    photos, 
+    onClose, 
+    initialIndex = 0 
+}: { 
+    visible: boolean; 
+    photos: string[]; 
+    onClose: () => void; 
+    initialIndex?: number;
+}) => {
+    const [currentIndex, setCurrentIndex] = useState(initialIndex);
+    const flatListRef = React.useRef<FlatList>(null);
+
+    useEffect(() => {
+        if (visible) {
+            setCurrentIndex(initialIndex);
+        }
+    }, [visible, initialIndex]);
+
+    const renderItem = ({ item }: { item: string }) => (
+        <View style={styles.imageViewerSlide}>
+            <Image 
+                source={{ uri: item }} 
+                style={styles.imageViewerImage}
+                resizeMode="contain"
+            />
+        </View>
+    );
+
+    if (!visible) return null;
+
+    return (
+        <Modal
+            visible={visible}
+            transparent
+            animationType="fade"
+            onRequestClose={onClose}
+        >
+            <View style={styles.imageViewerOverlay}>
+                <TouchableOpacity 
+                    style={styles.imageViewerClose}
+                    onPress={onClose}
+                    activeOpacity={0.7}
+                >
+                    <Ionicons name="close" size={28} color="#FFFFFF" />
+                </TouchableOpacity>
+                
+                <FlatList
+                    ref={flatListRef}
+                    data={photos}
+                    renderItem={renderItem}
+                    keyExtractor={(_, index) => `photo-${index}`}
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    initialScrollIndex={initialIndex}
+                    getItemLayout={(_, index) => ({
+                        length: width,
+                        offset: width * index,
+                        index,
+                    })}
+                    onScroll={(event) => {
+                        const index = Math.round(event.nativeEvent.contentOffset.x / width);
+                        setCurrentIndex(index);
+                    }}
+                    scrollEventThrottle={16}
+                />
+
+                {photos.length > 1 && (
+                    <View style={styles.imageViewerCounter}>
+                        <Text style={styles.imageViewerCounterText}>
+                            {currentIndex + 1} / {photos.length}
+                        </Text>
+                    </View>
+                )}
+            </View>
+        </Modal>
+    );
+};
+
+// ---------------------------------------------------------------------------
+// IMPROVED RATING MODAL
+// ---------------------------------------------------------------------------
+const RatingModal = ({
+    visible,
+    onClose,
+    onSubmit,
+    mistriName,
+}: {
+    visible: boolean;
+    onClose: () => void;
+    onSubmit: (rating: number, review: string) => Promise<void>;
+    mistriName?: string;
+}) => {
+    const [selectedRating, setSelectedRating] = useState(0);
+    const [review, setReview] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSubmit = async () => {
+        if (selectedRating === 0) {
+            Alert.alert('Please Rate', 'Select a rating before submitting.');
+            return;
+        }
+        setIsSubmitting(true);
+        try {
+            await onSubmit(selectedRating, review);
+            setSelectedRating(0);
+            setReview('');
+            onClose();
+        } catch (error) {
+            Alert.alert('Error', 'Failed to submit rating. Please try again.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <Modal
+            visible={visible}
+            transparent
+            animationType="slide"
+            onRequestClose={onClose}
+        >
+            <View style={styles.ratingModalOverlay}>
+                <TouchableOpacity 
+                    style={styles.ratingModalBackdrop} 
+                    activeOpacity={1} 
+                    onPress={onClose}
+                />
+                <View style={styles.ratingModalContent}>
+                    <View style={styles.ratingModalHeader}>
+                        <View style={styles.ratingModalHeaderLeft}>
+                            <View style={styles.ratingModalIcon}>
+                                <Ionicons name="star" size={24} color="#F59E0B" />
+                            </View>
+                            <View>
+                                <Text style={styles.ratingModalTitle}>Rate Your Experience</Text>
+                                <Text style={styles.ratingModalSubtitle}>
+                                    {mistriName ? `How was your service with ${mistriName}?` : 'How was your service experience?'}
+                                </Text>
+                            </View>
+                        </View>
+                        <TouchableOpacity onPress={onClose} style={styles.ratingModalClose}>
+                            <Ionicons name="close" size={24} color="#6B7280" />
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.ratingModalBody}>
+                        {/* Rating Stars */}
+                        <View style={styles.ratingStarsContainer}>
+                            {[1, 2, 3, 4, 5].map((star) => (
+                                <TouchableOpacity
+                                    key={star}
+                                    onPress={() => setSelectedRating(star)}
+                                    style={styles.ratingStarButton}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons
+                                        name={star <= selectedRating ? 'star' : 'star-outline'}
+                                        size={48}
+                                        color={star <= selectedRating ? '#F59E0B' : '#D1D5DB'}
+                                    />
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        {selectedRating > 0 && (
+                            <Text style={styles.ratingLabel}>
+                                {selectedRating === 1 && 'Poor'}
+                                {selectedRating === 2 && 'Fair'}
+                                {selectedRating === 3 && 'Good'}
+                                {selectedRating === 4 && 'Very Good'}
+                                {selectedRating === 5 && 'Excellent ⭐'}
+                            </Text>
+                        )}
+
+                        {/* Review Input */}
+                        <View style={styles.reviewInputContainer}>
+                            <Text style={styles.reviewLabel}>Write a Review (Optional)</Text>
+                            <TextInput
+                                style={styles.reviewInput}
+                                placeholder="Share your experience with the service..."
+                                placeholderTextColor="#9CA3AF"
+                                multiline
+                                numberOfLines={4}
+                                value={review}
+                                onChangeText={setReview}
+                                editable={!isSubmitting}
+                            />
+                        </View>
+
+                        {/* Quick review suggestions */}
+                        <View style={styles.quickReviews}>
+                            {['Great service!', 'Very professional', 'Quick and efficient', 'Highly recommended'].map((suggestion) => (
+                                <TouchableOpacity
+                                    key={suggestion}
+                                    style={styles.quickReviewChip}
+                                    onPress={() => setReview(suggestion)}
+                                    disabled={isSubmitting}
+                                >
+                                    <Text style={styles.quickReviewText}>{suggestion}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    </View>
+
+                    <View style={styles.ratingModalFooter}>
+                        <TouchableOpacity
+                            style={[styles.ratingModalButton, styles.ratingModalCancel]}
+                            onPress={onClose}
+                            disabled={isSubmitting}
+                        >
+                            <Text style={styles.ratingModalCancelText}>Skip</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[
+                                styles.ratingModalButton,
+                                styles.ratingModalSubmit,
+                                selectedRating === 0 && styles.ratingModalSubmitDisabled,
+                                isSubmitting && styles.ratingModalSubmitDisabled,
+                            ]}
+                            onPress={handleSubmit}
+                            disabled={selectedRating === 0 || isSubmitting}
+                        >
+                            {isSubmitting ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                                <>
+                                    <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+                                    <Text style={styles.ratingModalSubmitText}>Submit Rating</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </Modal>
+    );
+};
+
+// ---------------------------------------------------------------------------
+// MAIN COMPONENT
+// ---------------------------------------------------------------------------
 export default function RequestDetailsScreen() {
     const router = useRouter();
     const params = useLocalSearchParams();
@@ -41,20 +296,33 @@ export default function RequestDetailsScreen() {
     const { getServiceByName } = useServices();
     const [previousAssignedMistriId, setPreviousAssignedMistriId] = useState<string | null>(null);
     const [showRatingModal, setShowRatingModal] = useState(false);
-    // Poll request every 5 seconds
-    const { data: requestData, isLoading, error, isError } = useServiceRequestQuery(requestId, {
+    const [showImageViewer, setShowImageViewer] = useState(false);
+    const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(0);
+
+    // Queries
+    const { data: requestData, isLoading, error, isError, refetch } = useServiceRequestQuery(requestId, {
         refetchInterval: 5000,
         refetchIntervalInBackground: false,
     });
+    
     const { data: ratingStatus } = useRatingStatusQuery(requestId);
+    const { data: completionPhotosData } = useCompletionPhotosQuery(
+        requestData?.request?.status === 'completed' ? requestId : null
+    );
+    
     const { mutateAsync: cancelRequest, status: cancelStatus } = useCancelServiceRequest();
     const { mutateAsync: createRating } = useCreateRating();
+    
     const isCanceling = cancelStatus === 'pending';
     const request = requestData?.request;
     const mistriDetails = requestData?.mistriDetails;
     const selectedServices = requestData?.selectedServices || [];
-    // Calculate total price from selected services
+    const completionPhotos = completionPhotosData?.photos || [];
+    const isCompleted = request?.status === 'completed';
+
+    // Calculate total price
     const totalPrice = selectedServices.reduce((sum, service) => sum + parseFloat(service.price), 0);
+
     // Handle error or missing requestId
     useEffect(() => {
         if (!requestId) {
@@ -63,6 +331,7 @@ export default function RequestDetailsScreen() {
             ]);
         }
     }, [requestId, router]);
+
     useEffect(() => {
         if (isError && error) {
             if (__DEV__) console.error('Error fetching request:', error);
@@ -71,6 +340,7 @@ export default function RequestDetailsScreen() {
             ]);
         }
     }, [isError, error, router]);
+
     // Detect if mistri rejected the request
     useEffect(() => {
         if (!request) return;
@@ -86,6 +356,7 @@ export default function RequestDetailsScreen() {
             setPreviousAssignedMistriId(request.assignedMistriId || null);
         }
     }, [request, previousAssignedMistriId, mistriName, router]);
+
     const handleCancelRequest = async () => {
         Alert.alert('Cancel Request', 'Are you sure you want to cancel this service request?', [
             { text: 'No', style: 'cancel' },
@@ -106,6 +377,7 @@ export default function RequestDetailsScreen() {
             },
         ]);
     };
+
     const handleCallMistri = () => {
         if (mistriDetails?.phone) {
             Linking.openURL(`tel:${mistriDetails.phone}`).catch((err) => {
@@ -114,10 +386,18 @@ export default function RequestDetailsScreen() {
             });
         }
     };
+
     const handleSubmitRating = async (rating: number, review?: string) => {
         await createRating({ serviceRequestId: requestId, rating, review });
-        Alert.alert('Success', 'Thank you for your feedback!');
+        Alert.alert('Thank You!', 'Your feedback helps us improve our service.');
+        refetch();
     };
+
+    const handlePhotoPress = (index: number) => {
+        setSelectedPhotoIndex(index);
+        setShowImageViewer(true);
+    };
+
     const getStatusColor = () => {
         switch (request?.status) {
             case 'pending': return '#F59E0B';
@@ -127,6 +407,7 @@ export default function RequestDetailsScreen() {
             default: return '#6B7280';
         }
     };
+
     const getStatusLabel = () => {
         switch (request?.status) {
             case 'pending': return 'Waiting';
@@ -136,6 +417,7 @@ export default function RequestDetailsScreen() {
             default: return 'Unknown';
         }
     };
+
     const getStatusIcon = () => {
         switch (request?.status) {
             case 'pending': return 'hourglass-empty';
@@ -145,6 +427,7 @@ export default function RequestDetailsScreen() {
             default: return 'help';
         }
     };
+
     const formatDateTime = (value?: string) => {
         if (!value) return '-';
         const date = new Date(value);
@@ -156,17 +439,18 @@ export default function RequestDetailsScreen() {
             minute: '2-digit',
         });
     };
-    const formatDate = (value?: string) => {
-        if (!value) return '-';
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return '-';
-        return date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-        });
-    };
+
     const shortRequestId = requestId ? requestId.slice(0, 8).toUpperCase() : '-';
+    const serviceName = getServiceByName(request?.type)?.displayName ||
+        (request?.type ? request.type.charAt(0).toUpperCase() + request.type.slice(1) : 'Service');
+
+    // Timeline events
+    const timelineEvents = [
+        { label: 'Requested', timestamp: request?.createdAt, completed: true },
+        { label: 'Accepted', timestamp: request?.assignedAt, completed: !!request?.assignedAt },
+        { label: 'Completed', timestamp: request?.completedAt, completed: !!request?.completedAt },
+    ];
+
     if (isLoading || !request) {
         return (
             <SafeAreaContainer>
@@ -185,14 +469,7 @@ export default function RequestDetailsScreen() {
             </SafeAreaContainer>
         );
     }
-    const serviceName = getServiceByName(request.type)?.displayName ||
-        request.type.charAt(0).toUpperCase() + request.type.slice(1);
-    // Timeline events
-    const timelineEvents = [
-        { label: 'Requested', timestamp: request.createdAt, completed: true },
-        { label: 'Accepted', timestamp: request.assignedAt, completed: !!request.assignedAt },
-        { label: 'Completed', timestamp: request.completedAt, completed: !!request.completedAt },
-    ];
+
     return (
         <SafeAreaContainer>
             <PageTitle
@@ -203,9 +480,10 @@ export default function RequestDetailsScreen() {
                     </TouchableOpacity>
                 }
             />
+            
             <ScrollView
                 style={styles.content}
-                contentContainerStyle={[styles.contentContainer, { paddingBottom: 80 }]} // Space for sticky button
+                contentContainerStyle={[styles.contentContainer, { paddingBottom: 120 }]}
                 showsVerticalScrollIndicator={false}
             >
                 <View style={styles.receiptCard}>
@@ -215,6 +493,7 @@ export default function RequestDetailsScreen() {
                             <View key={i} style={styles.perforation} />
                         ))}
                     </View>
+
                     <View style={styles.receiptHeader}>
                         <View style={styles.receiptBrand}>
                             <Image
@@ -234,7 +513,9 @@ export default function RequestDetailsScreen() {
                             )}
                         </View>
                     </View>
+
                     <DashedLine style={{ marginBottom: 10 }} />
+
                     <View style={styles.metaGrid}>
                         <View style={styles.metaItem}>
                             <Text style={styles.metaLabel}>Job ID</Text>
@@ -261,39 +542,102 @@ export default function RequestDetailsScreen() {
                             </Text>
                         </View>
                     </View>
+
                     <DashedLine style={{ marginVertical: 10 }} />
+
                     <View style={styles.sectionBlock}>
                         <Text style={styles.blockTitle}>Location</Text>
                         <Text style={styles.blockText} numberOfLines={3}>
                             {request.address}
                         </Text>
                     </View>
+
                     {selectedServices.length > 0 && (
-                        <View style={styles.sectionBlock}>
-                            <Text style={styles.blockTitle}>Services</Text>
-                            <View style={styles.itemsList}>
-                                {selectedServices.map((service: any) => (
-                                    <View key={service.id} style={styles.itemGroup}>
-                                        <View style={styles.itemRow}>
-                                            <Text style={styles.itemName} numberOfLines={1}>{service.name}</Text>
-                                            <View style={styles.itemLeader} />
-                                            <Text style={styles.itemPrice}>Rs. {Number(service.price).toLocaleString()}</Text>
-                                        </View>
-                                        {service.description ? (
-                                            <Text style={styles.itemDescription} numberOfLines={2}>
-                                                {service.description}
-                                            </Text>
-                                        ) : null}
-                                    </View>
-                                ))}
-                            </View>
+                        <>
                             <DashedLine style={{ marginVertical: 10 }} />
-                            <View style={styles.totalRowReceipt}>
-                                <Text style={styles.totalLabel}>Total Estimate</Text>
-                                <Text style={styles.totalPrice}>Rs. {totalPrice.toLocaleString()}</Text>
+                            <View style={styles.sectionBlock}>
+                                <Text style={styles.blockTitle}>Services</Text>
+                                <View style={styles.itemsList}>
+                                    {selectedServices.map((service: any) => (
+                                        <View key={service.id} style={styles.itemGroup}>
+                                            <View style={styles.itemRow}>
+                                                <Text style={styles.itemName} numberOfLines={1}>{service.name}</Text>
+                                                <View style={styles.itemLeader} />
+                                                <Text style={styles.itemPrice}>Rs. {Number(service.price).toLocaleString()}</Text>
+                                            </View>
+                                            {service.description ? (
+                                                <Text style={styles.itemDescription} numberOfLines={2}>
+                                                    {service.description}
+                                                </Text>
+                                            ) : null}
+                                        </View>
+                                    ))}
+                                </View>
+                                <DashedLine style={{ marginVertical: 10 }} />
+                                <View style={styles.totalRowReceipt}>
+                                    <Text style={styles.totalLabel}>Total Estimate</Text>
+                                    <Text style={styles.totalPrice}>Rs. {totalPrice.toLocaleString()}</Text>
+                                </View>
                             </View>
-                        </View>
+                        </>
                     )}
+
+                    {/* ✅ COMPLETION PHOTOS SECTION */}
+                    {isCompleted && completionPhotos.length > 0 && (
+                        <>
+                            <DashedLine style={{ marginVertical: 10 }} />
+                            <View style={styles.sectionBlock}>
+                                <View style={styles.photoHeader}>
+                                    <Text style={styles.blockTitle}>Completion Photos</Text>
+                                    <Text style={styles.photoCount}>{completionPhotos.length} photos</Text>
+                                </View>
+                                <ScrollView 
+                                    horizontal 
+                                    showsHorizontalScrollIndicator={false}
+                                    style={styles.photoScrollView}
+                                >
+                                    {completionPhotos.map((photo, index) => (
+                                        <TouchableOpacity
+                                            key={index}
+                                            style={styles.photoThumbnail}
+                                            onPress={() => handlePhotoPress(index)}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Image 
+                                                source={{ uri: photo }} 
+                                                style={styles.photoThumbnailImage}
+                                            />
+                                            <View style={styles.photoOverlay}>
+                                                <Ionicons name="expand" size={20} color="#FFFFFF" />
+                                            </View>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                                {completionPhotosData?.warranty && (
+                                    <View style={styles.warrantyBadge}>
+                                        <Ionicons name="shield-checkmark" size={16} color="#F59E0B" />
+                                        <Text style={styles.warrantyBadgeText}>
+                                            7-Day Warranty Active
+                                        </Text>
+                                    </View>
+                                )}
+                            </View>
+                        </>
+                    )}
+
+                    {isCompleted && completionPhotos.length === 0 && (
+                        <>
+                            <DashedLine style={{ marginVertical: 10 }} />
+                            <View style={styles.sectionBlock}>
+                                <Text style={styles.blockTitle}>Completion Photos</Text>
+                                <View style={styles.noPhotosContainer}>
+                                    <Ionicons name="image-outline" size={32} color="#9CA3AF" />
+                                    <Text style={styles.noPhotosText}>No photos uploaded</Text>
+                                </View>
+                            </View>
+                        </>
+                    )}
+
                     <View style={styles.sectionBlock}>
                         <Text style={styles.blockTitle}>Timeline</Text>
                         <View style={styles.timelineList}>
@@ -307,12 +651,14 @@ export default function RequestDetailsScreen() {
                             ))}
                         </View>
                     </View>
+
                     {request.unpaid && (
                         <View style={styles.unpaidRow}>
                             <MaterialIcons name="warning" size={18} color="#DC2626" />
                             <Text style={styles.unpaidText}>Payment Pending</Text>
                         </View>
                     )}
+
                     {request.status === 'assigned' && mistriDetails && (
                         <View style={styles.sectionBlock}>
                             <Text style={styles.blockTitle}>Mistri</Text>
@@ -342,6 +688,7 @@ export default function RequestDetailsScreen() {
                             </View>
                         </View>
                     )}
+
                     {request.status === 'completed' && (
                         <View style={styles.sectionBlock}>
                             <Text style={styles.blockTitle}>Rating</Text>
@@ -372,6 +719,7 @@ export default function RequestDetailsScreen() {
                     </View>
                 </View>
             </ScrollView>
+
             {/* Sticky Action Buttons */}
             <View style={styles.stickyActions}>
                 {request.status === 'pending' && (
@@ -405,17 +753,39 @@ export default function RequestDetailsScreen() {
                         <Text style={styles.actionText}>Rate Service</Text>
                     </TouchableOpacity>
                 )}
+                {request.status === 'completed' && ratingStatus?.isRated && (
+                    <TouchableOpacity
+                        style={[styles.actionButton, styles.ratedActionButton]}
+                        onPress={() => router.back()}
+                    >
+                        <Ionicons name="checkmark-circle" size={20} color="#FFFFFF" />
+                        <Text style={styles.actionText}>Back to Dashboard</Text>
+                    </TouchableOpacity>
+                )}
             </View>
+
             {/* Rating Modal */}
             <RatingModal
                 visible={showRatingModal}
                 onClose={() => setShowRatingModal(false)}
                 onSubmit={handleSubmitRating}
-                mistriName={mistriDetails?.name}
+                mistriName={mistriDetails?.name || mistriName}
+            />
+
+            {/* Image Viewer Modal */}
+            <ImageViewerModal
+                visible={showImageViewer}
+                photos={completionPhotos}
+                onClose={() => setShowImageViewer(false)}
+                initialIndex={selectedPhotoIndex}
             />
         </SafeAreaContainer>
     );
 }
+
+// ---------------------------------------------------------------------------
+// STYLES
+// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
     loadingContainer: {
         flex: 1,
@@ -732,6 +1102,261 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         color: '#111827',
     },
+    // Photo Styles
+    photoHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    photoCount: {
+        fontSize: 12,
+        color: '#6B7280',
+        fontWeight: '500',
+    },
+    photoScrollView: {
+        marginTop: 4,
+        marginBottom: 8,
+    },
+    photoThumbnail: {
+        width: 100,
+        height: 100,
+        borderRadius: 8,
+        marginRight: 10,
+        position: 'relative',
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    photoThumbnailImage: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
+    },
+    photoOverlay: {
+        position: 'absolute',
+        bottom: 4,
+        right: 4,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        borderRadius: 12,
+        padding: 4,
+    },
+    noPhotosContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 20,
+        backgroundColor: '#F9FAFB',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        borderStyle: 'dashed',
+        gap: 8,
+    },
+    noPhotosText: {
+        fontSize: 13,
+        color: '#9CA3AF',
+        fontWeight: '500',
+    },
+    warrantyBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#FFFBEB',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#FDE68A',
+        alignSelf: 'flex-start',
+        marginTop: 4,
+    },
+    warrantyBadgeText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#92400E',
+    },
+    // Image Viewer
+    imageViewerOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.95)',
+    },
+    imageViewerClose: {
+        position: 'absolute',
+        top: 44,
+        right: 20,
+        zIndex: 10,
+        padding: 8,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 20,
+    },
+    imageViewerSlide: {
+        width,
+        height: height,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    imageViewerImage: {
+        width: width - 32,
+        height: height - 120,
+        borderRadius: 8,
+    },
+    imageViewerCounter: {
+        position: 'absolute',
+        bottom: 44,
+        alignSelf: 'center',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        borderRadius: 20,
+    },
+    imageViewerCounterText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    // Rating Modal
+    ratingModalOverlay: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    ratingModalBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    ratingModalContent: {
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        maxHeight: '80%',
+    },
+    ratingModalHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+    },
+    ratingModalHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    ratingModalIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#FEF3C7',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    ratingModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#111827',
+    },
+    ratingModalSubtitle: {
+        fontSize: 13,
+        color: '#6B7280',
+        marginTop: 1,
+    },
+    ratingModalClose: {
+        padding: 4,
+    },
+    ratingModalBody: {
+        padding: 20,
+    },
+    ratingStarsContainer: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 8,
+        marginBottom: 8,
+    },
+    ratingStarButton: {
+        padding: 4,
+    },
+    ratingLabel: {
+        textAlign: 'center',
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#111827',
+        marginBottom: 16,
+    },
+    reviewInputContainer: {
+        marginBottom: 12,
+    },
+    reviewLabel: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#374151',
+        marginBottom: 6,
+    },
+    reviewInput: {
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        fontSize: 14,
+        color: '#111827',
+        minHeight: 80,
+        textAlignVertical: 'top',
+        backgroundColor: '#F9FAFB',
+    },
+    quickReviews: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    quickReviewChip: {
+        backgroundColor: '#F3F4F6',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    quickReviewText: {
+        fontSize: 12,
+        color: '#374151',
+    },
+    ratingModalFooter: {
+        flexDirection: 'row',
+        gap: 10,
+        padding: 20,
+        borderTopWidth: 1,
+        borderTopColor: '#F3F4F6',
+    },
+    ratingModalButton: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 14,
+        borderRadius: 12,
+        gap: 6,
+    },
+    ratingModalCancel: {
+        backgroundColor: '#F3F4F6',
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    ratingModalCancelText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#6B7280',
+    },
+    ratingModalSubmit: {
+        backgroundColor: '#F59E0B',
+    },
+    ratingModalSubmitDisabled: {
+        opacity: 0.5,
+    },
+    ratingModalSubmitText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#FFFFFF',
+    },
     stickyActions: {
         position: 'absolute',
         bottom: 0,
@@ -763,6 +1388,9 @@ const styles = StyleSheet.create({
     },
     ratingActionButton: {
         backgroundColor: '#F59E0B',
+    },
+    ratedActionButton: {
+        backgroundColor: '#059669',
     },
     actionButtonDisabled: {
         opacity: 0.5,

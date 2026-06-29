@@ -360,7 +360,7 @@ export default function CheckoutScreen() {
 
             console.log('📦 Placing order:', JSON.stringify(orderData, null, 2));
 
-            const response = await fetch(`${API_BASE_URL}/api/orders`, {
+            const response = await fetch(`${API_BASE_URL}/api/users/orders`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

@@ -35,7 +35,6 @@ import { MaterialIcons, Ionicons, Feather, FontAwesome5 } from '@expo/vector-ico
 import { HeroBanner } from '../../../components/HeroBanner';
 import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useCustomerRequestsQuery } from '../../../hooks/queries';
 import { useServices } from '../../../context/ServicesContext';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -187,7 +186,9 @@ export default function CustomerDashboard() {
     const router = useRouter();
     const { getServiceByName, getServiceColor, getServiceIcon } = useServices();
 
-    const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useCustomerRequestsQuery();
+    // State for service requests - using the correct endpoint
+    const [requests, setRequests] = useState<ServiceRequest[]>([]);
+    const [requestsLoading, setRequestsLoading] = useState(true);
 
     // State - Updated for hierarchy
     const [categories, setCategories] = useState<ServiceCategory[]>([]);
@@ -241,6 +242,7 @@ export default function CustomerDashboard() {
     useEffect(() => {
         fetchHierarchyData();
         fetchBanners();
+        fetchServiceRequests(); // ✅ Fetch requests using correct endpoint
     }, []);
 
     useEffect(() => {
@@ -259,6 +261,59 @@ export default function CustomerDashboard() {
     // ============================================
     // API FUNCTIONS - UPDATED FOR HIERARCHY
     // ============================================
+
+    // ✅ FIXED: Fetch service requests using the correct endpoint
+    const fetchServiceRequests = async () => {
+        try {
+            setRequestsLoading(true);
+            
+            // Use the correct endpoint for user service requests
+            const url = `${API_BASE}/api/users/service-requests`;
+            console.log('[Dashboard] Fetching requests from:', url);
+            
+            const response = await fetch(url, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true',
+                },
+            });
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    // Token expired, try to refresh
+                    const newToken = await refreshAccessToken();
+                    if (newToken) {
+                        // Retry with new token
+                        const retryResponse = await fetch(url, {
+                            headers: {
+                                'Authorization': `Bearer ${newToken}`,
+                                'Content-Type': 'application/json',
+                                'ngrok-skip-browser-warning': 'true',
+                            },
+                        });
+                        if (retryResponse.ok) {
+                            const data = await retryResponse.json();
+                            setRequests(data.requests || []);
+                            return;
+                        }
+                    }
+                    throw new Error('Authentication failed');
+                }
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log('[Dashboard] Requests fetched:', data.requests?.length || 0);
+            setRequests(data.requests || []);
+        } catch (error) {
+            console.error('[Dashboard] Error fetching requests:', error);
+            // Don't show error to user, just show empty state
+            setRequests([]);
+        } finally {
+            setRequestsLoading(false);
+        }
+    };
 
     const fetchHierarchyData = async () => {
         try {
@@ -283,11 +338,9 @@ export default function CustomerDashboard() {
                 console.log('[Dashboard] Categories found:', data.hierarchy?.length || 0);
                 console.log('[Dashboard] Total items:', data.totalItems || 0);
                 
-                // Set categories
                 setCategories(data.hierarchy || []);
                 setDisplayCategories(data.hierarchy || []);
                 
-                // Flatten all items for search and display
                 const flat: ServiceItem[] = [];
                 (data.hierarchy || []).forEach((cat) => {
                     (cat.subCategories || []).forEach((sub) => {
@@ -302,22 +355,18 @@ export default function CustomerDashboard() {
                 });
                 setAllServiceItems(flat);
                 
-                // Set popular services
                 if (data.popularServices && data.popularServices.length > 0) {
                     setPopularServices(data.popularServices.slice(0, 10));
                 } else {
-                    // Fallback: get popular items from flat list
                     setPopularServices(flat.filter((s) => s.isPopular).slice(0, 10));
                 }
             } else {
                 console.error('[Dashboard] Hierarchy API error:', data);
-                // Fallback to legacy categories
                 await fetchLegacyCategories();
             }
         } catch (error) {
             console.error('[Dashboard] Error fetching hierarchy:', error);
             setError('Failed to load services. Please check your connection.');
-            // Fallback to legacy categories
             await fetchLegacyCategories();
         } finally {
             setCategoriesLoading(false);
@@ -325,7 +374,6 @@ export default function CustomerDashboard() {
         }
     };
 
-    // Legacy fallback
     const fetchLegacyCategories = async () => {
         try {
             console.log('[Dashboard] Falling back to legacy categories');
@@ -339,7 +387,6 @@ export default function CustomerDashboard() {
 
             if (response.ok && data.success) {
                 let categoriesData = data.categories || [];
-                // Convert legacy format to display format
                 const mappedCategories = categoriesData.map((cat: any) => ({
                     id: cat.id,
                     name: cat.name,
@@ -365,7 +412,7 @@ export default function CustomerDashboard() {
         try {
             setBannersLoading(true);
 
-            const ad1Response = await fetch(`${API_BASE}/api/hero-banners/type/ad1`);
+            const ad1Response = await fetch(`${API_BASE}/api/public/hero-banners/type/ad1`);
             const ad1Data = await ad1Response.json();
             if (ad1Data.success && ad1Data.banners && ad1Data.banners.length > 0) {
                 setAd1Banners(ad1Data.banners);
@@ -373,7 +420,7 @@ export default function CustomerDashboard() {
                 setAd1Banners([]);
             }
 
-            const ad2Response = await fetch(`${API_BASE}/api/hero-banners/type/ad2`);
+            const ad2Response = await fetch(`${API_BASE}/api/public/hero-banners/type/ad2`);
             const ad2Data = await ad2Response.json();
             if (ad2Data.success && ad2Data.banners && ad2Data.banners.length > 0) {
                 setAd2Banners(ad2Data.banners);
@@ -394,7 +441,7 @@ export default function CustomerDashboard() {
         await Promise.all([
             fetchHierarchyData(),
             fetchBanners(),
-            refetchRequests(),
+            fetchServiceRequests(),
         ]);
         setRefreshing(false);
     };
@@ -850,7 +897,6 @@ export default function CustomerDashboard() {
     };
 
     const renderPopularServices = () => {
-        // Get popular items from the flattened list
         const popularItems = popularServices.length > 0 
             ? popularServices 
             : allServiceItems.filter(s => s.isPopular).slice(0, 10);
@@ -1058,7 +1104,7 @@ export default function CustomerDashboard() {
 }
 
 // ============================================
-// STYLES - CLEAN & MODERN
+// STYLES - Same as before (no changes needed)
 // ============================================
 
 const styles = StyleSheet.create({

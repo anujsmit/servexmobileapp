@@ -1,3 +1,5 @@
+// app/(protected)/onboarding/mistri/profile.tsx
+
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
     SafeAreaView,
@@ -12,8 +14,10 @@ import {
     ActivityIndicator,
     Platform,
     Dimensions,
+    KeyboardAvoidingView,
+    Animated,
+    StatusBar,
 } from 'react-native';
-import * as ImageManipulator from 'expo-image-manipulator';
 import { useAuth } from '../../../../context/AuthContext';
 import { API_BASE_URL as API_URL } from '../../../../lib/config';
 import { useRouter } from 'expo-router';
@@ -26,8 +30,16 @@ import type { ComponentProps } from 'react';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
-const ACCENT = '#179d2e';
+// ✅ Blue color scheme
+const ACCENT = '#2563eb';
+const ACCENT_DARK = '#1d4ed8';
+const ACCENT_LIGHT = '#3b82f6';
 const WINDOW_WIDTH = Dimensions.get('window').width;
+
+const CARD_GAP = 12;
+const SCROLL_H_PADDING = 20;
+const SECTION_H_PADDING = 20;
+const SERVICE_CARD_WIDTH = (WINDOW_WIDTH - SCROLL_H_PADDING * 2 - SECTION_H_PADDING * 2 - CARD_GAP) / 2;
 
 const EXPERIENCE_OPTIONS = [
     { value: 'less_than_1', label: '< 1 year' },
@@ -51,7 +63,7 @@ const MistriOnboardingProfile = React.memo(() => {
     const [fullNameError, setFullNameError] = useState('');
     const [imageUri, setImageUri] = useState<string | null>(null);
     const [imageBase64, setImageBase64] = useState<string | null>(null);
-    
+
     const [selectedServiceIds, setSelectedServiceIds] = useState<number[]>([]);
     const [bio, setBio] = useState('');
     const [experienceLevel, setExperienceLevel] = useState<string | null>(null);
@@ -67,11 +79,12 @@ const MistriOnboardingProfile = React.memo(() => {
 
     const [uploading, setUploading] = useState(false);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
-    const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
 
     // Camera states
     const [cameraMode, setCameraMode] = useState<'profile' | 'idFront' | 'idBack' | null>(null);
     const [cameraVisible, setCameraVisible] = useState(false);
+
+    const progressAnim = useRef(new Animated.Value(0)).current;
 
     const isMounted = useRef(true);
 
@@ -92,18 +105,27 @@ const MistriOnboardingProfile = React.memo(() => {
             { completed: !!markerPosition && location.length > 0, weight: 15 },
             { completed: !!govtIdType && !!idFrontUri && !!idFrontBase64 && !!idBackUri && !!idBackBase64, weight: 15 },
         ];
-        
+
         const totalWeight = fields.reduce((sum, field) => sum + field.weight, 0);
         const completedWeight = fields.reduce((sum, field) => sum + (field.completed ? field.weight : 0), 0);
-        
+
         return Math.round((completedWeight / totalWeight) * 100);
     }, [fullName, imageUri, imageBase64, selectedServiceIds, bio, experienceLevel, markerPosition, location, govtIdType, idFrontUri, idFrontBase64, idBackUri, idBackBase64]);
+
+    // Animate the progress bar smoothly
+    useEffect(() => {
+        Animated.timing(progressAnim, {
+            toValue: completionProgress,
+            duration: 400,
+            useNativeDriver: false,
+        }).start();
+    }, [completionProgress, progressAnim]);
 
     const SERVICE_OPTIONS = useMemo(() => {
         return services.map(service => {
             let icon: IoniconName = 'construct-outline';
             const serviceNameLower = service.serviceName.toLowerCase();
-            
+
             if (serviceNameLower.includes('plumb')) icon = 'hammer-outline';
             else if (serviceNameLower === 'electrician') icon = 'flash-outline';
             else if (serviceNameLower === 'painter') icon = 'brush-outline';
@@ -111,9 +133,9 @@ const MistriOnboardingProfile = React.memo(() => {
             else if (serviceNameLower === 'carpenter') icon = 'construct-outline';
             else if (serviceNameLower === 'ac_repair') icon = 'snow-outline';
             else if (serviceNameLower === 'mechanic') icon = 'car-outline';
-            
+
             const displayName = service.serviceName.charAt(0).toUpperCase() + service.serviceName.slice(1);
-            
+
             return {
                 id: service.id,
                 name: service.serviceName.toLowerCase(),
@@ -179,7 +201,7 @@ const MistriOnboardingProfile = React.memo(() => {
             govtIdType &&
             idFrontUri && idFrontBase64 &&
             idBackUri && idBackBase64);
-    }, [fullName, imageUri, imageBase64, selectedServiceIds, bio, experienceLevel, 
+    }, [fullName, imageUri, imageBase64, selectedServiceIds, bio, experienceLevel,
         markerPosition, location, govtIdType, idFrontUri, idFrontBase64, idBackUri, idBackBase64]);
 
     const handleContinue = useCallback(async () => {
@@ -187,7 +209,7 @@ const MistriOnboardingProfile = React.memo(() => {
             Alert.alert('Missing info', 'Please fill all required fields.');
             return;
         }
-        
+
         setUploading(true);
 
         try {
@@ -245,7 +267,7 @@ const MistriOnboardingProfile = React.memo(() => {
         } finally {
             setUploading(false);
         }
-    }, [isFormValid, markerPosition, location, selectedServiceIds, imageBase64, fullName, bio, 
+    }, [isFormValid, markerPosition, location, selectedServiceIds, imageBase64, fullName, bio,
         experienceLevel, govtIdType, idFrontBase64, idBackBase64, token, getMe, router]);
 
     const renderIdPicker = useCallback((
@@ -253,25 +275,24 @@ const MistriOnboardingProfile = React.memo(() => {
         uri: string | null,
         onTakePhoto: () => void
     ) => (
-        <TouchableOpacity 
+        <TouchableOpacity
             style={[
                 styles.idPickerButton,
                 uri && styles.idPickerButtonCompleted
-            ]} 
-            onPress={onTakePhoto} 
+            ]}
+            onPress={onTakePhoto}
             activeOpacity={0.8}
-            disabled={isProcessingPhoto}
         >
             {uri ? (
                 <>
-                    <Image source={{ uri }} style={styles.idThumbnail} />
+                    <Image source={{ uri }} style={styles.idThumbnail} resizeMode="cover" />
                     <View style={styles.idPickerOverlay}>
                         <Ionicons name="checkmark-circle" size={24} color="#22c55e" />
                     </View>
                     <TouchableOpacity
                         style={styles.retakeButton}
-                        onPress={onTakePhoto}
-                        disabled={isProcessingPhoto}
+                        onPress={(e) => { e.stopPropagation(); onTakePhoto(); }}
+                        activeOpacity={0.8}
                     >
                         <Ionicons name="camera-reverse" size={16} color="white" />
                         <Text style={styles.retakeText}>Retake</Text>
@@ -279,23 +300,18 @@ const MistriOnboardingProfile = React.memo(() => {
                 </>
             ) : (
                 <View style={styles.idPickerPlaceholder}>
-                    {isProcessingPhoto ? (
-                        <ActivityIndicator size="small" color={ACCENT} />
-                    ) : (
-                        <>
-                            <Ionicons name="camera-outline" size={36} color="#9ca3af" />
-                            <Text style={styles.idPickerLabel}>{label}</Text>
-                            <Text style={styles.idPickerSubLabel}>Tap to take photo</Text>
-                        </>
-                    )}
+                    <Ionicons name="camera-outline" size={36} color="#9ca3af" />
+                    <Text style={styles.idPickerLabel}>{label}</Text>
+                    <Text style={styles.idPickerSubLabel}>Tap to take photo</Text>
                 </View>
             )}
         </TouchableOpacity>
-    ), [isProcessingPhoto]);
+    ), []);
 
     if (servicesLoading) {
         return (
             <SafeAreaView style={styles.safeArea}>
+                <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color={ACCENT} />
                     <Text style={styles.loadingText}>Loading services...</Text>
@@ -306,390 +322,384 @@ const MistriOnboardingProfile = React.memo(() => {
 
     return (
         <SafeAreaView style={styles.safeArea}>
+            <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+
             {/* Progress Header */}
             <View style={styles.progressHeader}>
                 <View style={styles.progressInfo}>
                     <Text style={styles.progressLabel}>Profile Completion</Text>
-                    <Text style={styles.progressPercentage}>{completionProgress}%</Text>
+                    <Text style={[styles.progressPercentage, { color: currentServiceColor() }]}>
+                        {completionProgress}%
+                    </Text>
                 </View>
                 <View style={styles.progressBarBackground}>
-                    <View 
+                    <Animated.View
                         style={[
-                            styles.progressBarFill, 
-                            { 
-                                width: `${completionProgress}%`,
-                                backgroundColor: currentServiceColor()
+                            styles.progressBarFill,
+                            {
+                                width: progressAnim.interpolate({
+                                    inputRange: [0, 100],
+                                    outputRange: ['0%', '100%'],
+                                }),
+                                backgroundColor: currentServiceColor(),
                             }
-                        ]} 
+                        ]}
                     />
                 </View>
             </View>
 
-            <ScrollView 
-                contentContainerStyle={styles.scrollContent} 
-                showsVerticalScrollIndicator={false} 
-                keyboardShouldPersistTaps="handled"
-                removeClippedSubviews={true}
+            <KeyboardAvoidingView
+                style={styles.keyboardAvoid}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                keyboardVerticalOffset={0}
             >
-                <View style={styles.headerSection}>
-                    <Image source={require('../../../../assets/images/logo.png')} style={styles.logo} resizeMode="contain" />
-                    <Text style={styles.title}>Finish Your Profile</Text>
-                    <Text style={styles.subtitle}>Complete your service profile to start accepting jobs</Text>
-                </View>
-
-                {/* Profile Photo Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionHeader}>
-                        <View style={styles.sectionTitleRow}>
-                            <Text style={styles.inputLabel}>Profile Photo</Text>
-                            <Text style={styles.required}>*</Text>
-                            {imageUri && (
-                                <View style={styles.completedBadge}>
-                                    <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
-                                </View>
-                            )}
-                        </View>
+                <ScrollView
+                    contentContainerStyle={styles.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                >
+                    <View style={styles.headerSection}>
+                        <Image source={require('../../../../assets/images/logo.png')} style={styles.logo} resizeMode="contain" />
+                        <Text style={styles.title}>Finish Your Profile</Text>
+                        <Text style={styles.subtitle}>Complete your service profile to start accepting jobs</Text>
                     </View>
-                    <Text style={styles.helperText}>Take a clear, professional photo of yourself</Text>
-                    <TouchableOpacity
-                        style={[
-                            styles.avatarPlaceholder,
-                            imageUri && styles.avatarPlaceholderCompleted
-                        ]}
-                        onPress={() => handleCameraOpen('profile')}
-                        activeOpacity={0.8}
-                        disabled={isProcessingPhoto}
-                    >
-                        {imageUri ? (
-                            <>
-                                <Image source={{ uri: imageUri }} style={styles.avatar} />
-                                <View style={styles.cameraOverlay}>
-                                    <Ionicons name="camera-reverse" size={20} color="white" />
-                                    <Text style={styles.retakeText}>Retake</Text>
-                                </View>
-                            </>
-                        ) : (
-                            <View style={styles.avatarEmpty}>
-                                {isProcessingPhoto ? (
-                                    <ActivityIndicator size="large" color={ACCENT} />
-                                ) : (
-                                    <>
-                                        <Ionicons name="camera" size={36} color="#9ca3af" />
-                                        <Text style={styles.avatarEmptyText}>Take Photo</Text>
-                                    </>
+
+                    {/* Profile Photo Section */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <View style={styles.sectionTitleRow}>
+                                <Text style={styles.inputLabel}>Profile Photo</Text>
+                                <Text style={styles.required}>*</Text>
+                                {imageUri && (
+                                    <View style={styles.completedBadge}>
+                                        <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+                                    </View>
                                 )}
                             </View>
-                        )}
-                    </TouchableOpacity>
-                </View>
-
-                <View style={styles.divider} />
-
-                {/* Full Name Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionTitleRow}>
-                        <Text style={styles.inputLabel}>Full Name</Text>
-                        <Text style={styles.required}>*</Text>
-                        {fullName.trim() && (
-                            <View style={styles.completedBadge}>
-                                <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
-                            </View>
-                        )}
+                        </View>
+                        <Text style={styles.helperText}>Take a clear, professional photo of yourself</Text>
+                        <TouchableOpacity
+                            style={[
+                                styles.avatarPlaceholder,
+                                imageUri && styles.avatarPlaceholderCompleted
+                            ]}
+                            onPress={() => handleCameraOpen('profile')}
+                            activeOpacity={0.8}
+                        >
+                            {imageUri ? (
+                                <>
+                                    <Image source={{ uri: imageUri }} style={styles.avatar} />
+                                    <View style={styles.cameraOverlay}>
+                                        <Ionicons name="camera-reverse" size={20} color="white" />
+                                        <Text style={styles.retakeText}>Retake</Text>
+                                    </View>
+                                </>
+                            ) : (
+                                <View style={styles.avatarEmpty}>
+                                    <Ionicons name="camera" size={36} color="#9ca3af" />
+                                    <Text style={styles.avatarEmptyText}>Take Photo</Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
                     </View>
-                    <View style={[
-                        styles.inputWrapper,
-                        fullNameError ? styles.inputWrapperError : null,
-                        fullName.trim() ? styles.inputWrapperCompleted : null
-                    ]}>
-                        <TextInput
-                            placeholder="Enter your full name"
-                            value={fullName}
-                            onChangeText={text => { 
-                                setFullName(text); 
-                                if (text.trim()) setFullNameError(''); 
-                            }}
-                            onBlur={() => { 
-                                if (!fullName.trim()) setFullNameError('Full name is required'); 
-                            }}
-                            returnKeyType="next"
-                            style={styles.textInput}
-                        />
-                    </View>
-                    {fullNameError ? <Text style={styles.errorText}>{fullNameError}</Text> : null}
-                </View>
 
-                <View style={styles.divider} />
-
-                {/* Services Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionHeader}>
+                    {/* Full Name Section */}
+                    <View style={styles.section}>
                         <View style={styles.sectionTitleRow}>
-                            <Text style={styles.inputLabel}>Select Services</Text>
+                            <Text style={styles.inputLabel}>Full Name</Text>
                             <Text style={styles.required}>*</Text>
-                            {selectedServiceIds.length > 0 && (
+                            {fullName.trim() && (
                                 <View style={styles.completedBadge}>
                                     <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
                                 </View>
                             )}
                         </View>
-                        <View style={styles.bulkActions}>
-                            <TouchableOpacity 
-                                onPress={() => setSelectedServiceIds(SERVICE_OPTIONS.map(s => s.id))} 
-                                style={styles.bulkAction}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.bulkActionText}>Select All</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity 
-                                onPress={() => setSelectedServiceIds([])} 
-                                style={styles.bulkAction}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.bulkActionText}>Clear</Text>
-                            </TouchableOpacity>
+                        <View style={[
+                            styles.inputWrapper,
+                            fullNameError ? styles.inputWrapperError : null,
+                            fullName.trim() ? styles.inputWrapperCompleted : null
+                        ]}>
+                            <TextInput
+                                placeholder="Enter your full name"
+                                value={fullName}
+                                onChangeText={text => {
+                                    setFullName(text);
+                                    if (text.trim()) setFullNameError('');
+                                }}
+                                onBlur={() => {
+                                    if (!fullName.trim()) setFullNameError('Full name is required');
+                                }}
+                                returnKeyType="next"
+                                style={styles.textInput}
+                            />
                         </View>
+                        {fullNameError ? <Text style={styles.errorText}>{fullNameError}</Text> : null}
                     </View>
-                    <Text style={styles.helperText}>Choose all services you offer</Text>
-                    
-                    <View style={styles.servicesGrid}>
-                        {SERVICE_OPTIONS.map(opt => {
-                            const isSelected = selectedServiceIds.includes(opt.id);
-                            return (
+
+                    {/* Services Section */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <View style={styles.sectionTitleRow}>
+                                <Text style={styles.inputLabel}>Select Services</Text>
+                                <Text style={styles.required}>*</Text>
+                                {selectedServiceIds.length > 0 && (
+                                    <View style={styles.completedBadge}>
+                                        <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+                                    </View>
+                                )}
+                            </View>
+                            <View style={styles.bulkActions}>
                                 <TouchableOpacity
-                                    key={opt.id}
-                                    style={[
-                                        styles.serviceCard,
-                                        isSelected && { 
-                                            borderColor: opt.color, 
-                                            backgroundColor: `${opt.color}10`,
-                                        },
-                                    ]}
-                                    onPress={() => {
-                                        setSelectedServiceIds(prev => 
-                                            prev.includes(opt.id) 
-                                                ? prev.filter(id => id !== opt.id)
-                                                : [...prev, opt.id]
-                                        );
-                                    }}
+                                    onPress={() => setSelectedServiceIds(SERVICE_OPTIONS.map(s => s.id))}
+                                    style={styles.bulkAction}
                                     activeOpacity={0.7}
                                 >
-                                    <View style={[styles.serviceIcon, { backgroundColor: `${opt.color}20` }]}>
-                                        <Ionicons name={opt.icon} size={30} color={isSelected ? opt.color : '#9ca3af'} />
-                                    </View>
-                                    <Text style={[styles.serviceName, isSelected && { color: opt.color, fontWeight: '700' }]}>
-                                        {opt.displayName}
-                                    </Text>
-                                    {isSelected && (
-                                        <View style={[styles.checkBadge, { backgroundColor: opt.color }]}>
-                                            <Ionicons name="checkmark" size={18} color="#fff" />
-                                        </View>
-                                    )}
+                                    <Text style={styles.bulkActionText}>Select All</Text>
                                 </TouchableOpacity>
-                            );
-                        })}
-                    </View>
-                </View>
-
-                <View style={styles.divider} />
-
-                {/* Bio Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionTitleRow}>
-                        <Text style={styles.inputLabel}>Bio</Text>
-                        <Text style={styles.required}>*</Text>
-                        {bio.trim() && (
-                            <View style={styles.completedBadge}>
-                                <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+                                <TouchableOpacity
+                                    onPress={() => setSelectedServiceIds([])}
+                                    style={styles.bulkAction}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={styles.bulkActionText}>Clear</Text>
+                                </TouchableOpacity>
                             </View>
-                        )}
-                    </View>
-                    <Text style={styles.helperText}>Describe your skills and experience in detail</Text>
-                    <View style={[
-                        styles.inputWrapper,
-                        bio.trim() ? styles.inputWrapperCompleted : null
-                    ]}>
-                        <TextInput
-                            placeholder="Tell customers about your expertise, specializations, and what makes you unique..."
-                            value={bio}
-                            onChangeText={setBio}
-                            multiline
-                            numberOfLines={4}
-                            style={[styles.textInput, styles.textArea]}
-                            placeholderTextColor="#9ca3af"
-                        />
-                    </View>
-                </View>
+                        </View>
+                        <Text style={styles.helperText}>Choose all services you offer</Text>
 
-                <View style={styles.divider} />
+                        <View style={styles.servicesGrid}>
+                            {SERVICE_OPTIONS.map(opt => {
+                                const isSelected = selectedServiceIds.includes(opt.id);
+                                return (
+                                    <TouchableOpacity
+                                        key={opt.id}
+                                        style={[
+                                            styles.serviceCard,
+                                            { width: SERVICE_CARD_WIDTH },
+                                            isSelected && {
+                                                borderColor: opt.color,
+                                                backgroundColor: `${opt.color}15`,
+                                            },
+                                        ]}
+                                        onPress={() => {
+                                            setSelectedServiceIds(prev =>
+                                                prev.includes(opt.id)
+                                                    ? prev.filter(id => id !== opt.id)
+                                                    : [...prev, opt.id]
+                                            );
+                                        }}
+                                        activeOpacity={0.7}
+                                    >
+                                        <View style={[styles.serviceIcon, { backgroundColor: `${opt.color}20` }]}>
+                                            <Ionicons name={opt.icon} size={30} color={isSelected ? opt.color : '#9ca3af'} />
+                                        </View>
+                                        <Text style={[styles.serviceName, isSelected && { color: opt.color, fontWeight: '700' }]}>
+                                            {opt.displayName}
+                                        </Text>
+                                        {isSelected && (
+                                            <View style={[styles.checkBadge, { backgroundColor: opt.color }]}>
+                                                <Ionicons name="checkmark" size={18} color="#fff" />
+                                            </View>
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
 
-                {/* Experience Level Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionTitleRow}>
-                        <Text style={styles.inputLabel}>Years of Experience</Text>
-                        <Text style={styles.required}>*</Text>
-                        {experienceLevel && (
-                            <View style={styles.completedBadge}>
-                                <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+                    {/* Bio Section */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionTitleRow}>
+                            <Text style={styles.inputLabel}>Bio</Text>
+                            <Text style={styles.required}>*</Text>
+                            {bio.trim() && (
+                                <View style={styles.completedBadge}>
+                                    <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+                                </View>
+                            )}
+                        </View>
+                        <Text style={styles.helperText}>Describe your skills and experience in detail</Text>
+                        <View style={[
+                            styles.inputWrapper,
+                            bio.trim() ? styles.inputWrapperCompleted : null
+                        ]}>
+                            <TextInput
+                                placeholder="Tell customers about your expertise, specializations, and what makes you unique..."
+                                value={bio}
+                                onChangeText={setBio}
+                                multiline
+                                numberOfLines={4}
+                                style={[styles.textInput, styles.textArea]}
+                                placeholderTextColor="#9ca3af"
+                            />
+                        </View>
+                    </View>
+
+                    {/* Experience Level Section */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionTitleRow}>
+                            <Text style={styles.inputLabel}>Years of Experience</Text>
+                            <Text style={styles.required}>*</Text>
+                            {experienceLevel && (
+                                <View style={styles.completedBadge}>
+                                    <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+                                </View>
+                            )}
+                        </View>
+                        <View style={styles.pillRow}>
+                            {EXPERIENCE_OPTIONS.map(opt => (
+                                <TouchableOpacity
+                                    key={opt.value}
+                                    style={[
+                                        styles.expPill,
+                                        experienceLevel === opt.value && {
+                                            backgroundColor: `${ACCENT}15`,
+                                            borderColor: ACCENT,
+                                            borderWidth: 2,
+                                        },
+                                    ]}
+                                    onPress={() => setExperienceLevel(opt.value)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={[styles.pillText, experienceLevel === opt.value && { color: ACCENT, fontWeight: '700' }]}>
+                                        {opt.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    </View>
+
+                    {/* Service Location Section */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionTitleRow}>
+                            <Text style={styles.inputLabel}>Service Location</Text>
+                            <Text style={styles.required}>*</Text>
+                            {markerPosition && location && (
+                                <View style={styles.completedBadge}>
+                                    <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+                                </View>
+                            )}
+                        </View>
+                        <Text style={styles.helperText}>Customers will find you based on this location</Text>
+                        {markerPosition ? (
+                            <View style={[styles.locationCard, { borderColor: currentServiceColor(), backgroundColor: `${currentServiceColor()}08` }]}>
+                                <MaterialIcons name="location-on" size={32} color={currentServiceColor()} style={{ marginRight: 12 }} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.locationLabel}>Location Selected</Text>
+                                    <Text style={styles.locationCoords} numberOfLines={1}>
+                                        {markerPosition.latitude.toFixed(4)}, {markerPosition.longitude.toFixed(4)}
+                                    </Text>
+                                </View>
+                                <TouchableOpacity
+                                    style={[styles.changeBtn, { backgroundColor: currentServiceColor() }]}
+                                    onPress={() => setShowMapSelector(true)}
+                                    activeOpacity={0.8}
+                                >
+                                    <Text style={styles.changeBtnText}>Change</Text>
+                                </TouchableOpacity>
                             </View>
-                        )}
-                    </View>
-                    <View style={styles.pillRow}>
-                        {EXPERIENCE_OPTIONS.map(opt => (
+                        ) : (
                             <TouchableOpacity
-                                key={opt.value}
-                                style={[
-                                    styles.expPill,
-                                    experienceLevel === opt.value && { 
-                                        backgroundColor: `${ACCENT}15`, 
-                                        borderColor: ACCENT,
-                                        borderWidth: 2
-                                    },
-                                ]}
-                                onPress={() => setExperienceLevel(opt.value)}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={[styles.pillText, experienceLevel === opt.value && { color: ACCENT, fontWeight: '700' }]}>
-                                    {opt.label}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-
-                <View style={styles.divider} />
-
-                {/* Service Location Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionTitleRow}>
-                        <Text style={styles.inputLabel}>Service Location</Text>
-                        <Text style={styles.required}>*</Text>
-                        {markerPosition && location && (
-                            <View style={styles.completedBadge}>
-                                <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
-                            </View>
-                        )}
-                    </View>
-                    <Text style={styles.helperText}>Customers will find you based on this location</Text>
-                    {markerPosition ? (
-                        <View style={[styles.locationCard, { borderColor: currentServiceColor(), backgroundColor: `${currentServiceColor()}08` }]}>
-                            <MaterialIcons name="location-on" size={32} color={currentServiceColor()} style={{ marginRight: 12 }} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.locationLabel}>Location Selected</Text>
-                                <Text style={styles.locationCoords}>
-                                    {markerPosition.latitude.toFixed(4)}, {markerPosition.longitude.toFixed(4)}
-                                </Text>
-                            </View>
-                            <TouchableOpacity
-                                style={[styles.changeBtn, { backgroundColor: currentServiceColor() }]}
+                                style={[styles.mapPickerButton, { borderColor: currentServiceColor(), borderStyle: 'dashed' }]}
                                 onPress={() => setShowMapSelector(true)}
                                 activeOpacity={0.8}
                             >
-                                <Text style={styles.changeBtnText}>Change</Text>
-                            </TouchableOpacity>
-                        </View>
-                    ) : (
-                        <TouchableOpacity
-                            style={[styles.mapPickerButton, { borderColor: currentServiceColor(), borderStyle: 'dashed' }]}
-                            onPress={() => setShowMapSelector(true)}
-                            activeOpacity={0.8}
-                        >
-                            <MaterialIcons name="add-location" size={28} color={currentServiceColor()} />
-                            <Text style={[styles.mapPickerText, { color: currentServiceColor() }]}>
-                                Select Location on Map
-                            </Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                <View style={styles.divider} />
-
-                {/* Government ID Section */}
-                <View style={styles.section}>
-                    <View style={styles.sectionTitleRow}>
-                        <Text style={styles.inputLabel}>Government ID Verification</Text>
-                        <Text style={styles.required}>*</Text>
-                        {govtIdType && idFrontUri && idBackUri && (
-                            <View style={styles.completedBadge}>
-                                <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
-                            </View>
-                        )}
-                    </View>
-                    <Text style={styles.helperText}>Take clear photos of both sides of your ID for verification</Text>
-
-                    <View style={styles.idTypeGrid}>
-                        {GOVT_ID_TYPES.map(idType => (
-                            <TouchableOpacity
-                                key={idType.value}
-                                style={[
-                                    styles.idTypePill,
-                                    govtIdType === idType.value && { 
-                                        backgroundColor: `${ACCENT}15`, 
-                                        borderColor: ACCENT,
-                                        borderWidth: 2
-                                    },
-                                ]}
-                                onPress={() => setGovtIdType(idType.value)}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={[styles.idTypeText, govtIdType === idType.value && { color: ACCENT, fontWeight: '700' }]}>
-                                    {idType.label}
+                                <MaterialIcons name="add-location" size={28} color={currentServiceColor()} />
+                                <Text style={[styles.mapPickerText, { color: currentServiceColor() }]}>
+                                    Select Location on Map
                                 </Text>
                             </TouchableOpacity>
-                        ))}
-                    </View>
-
-                    <View style={styles.idPickersRow}>
-                        {renderIdPicker(
-                            'Front Side',
-                            idFrontUri,
-                            () => handleCameraOpen('idFront')
-                        )}
-                        {renderIdPicker(
-                            'Back Side',
-                            idBackUri,
-                            () => handleCameraOpen('idBack')
                         )}
                     </View>
-                </View>
 
-                {/* Submit Section */}
-                <View style={styles.submitSection}>
-                    <TouchableOpacity
-                        style={[
-                            styles.submitButton,
-                            { backgroundColor: currentServiceColor() },
-                            (!isFormValid() || uploading) && styles.buttonDisabled,
-                        ]}
-                        onPress={handleContinue}
-                        disabled={!isFormValid() || uploading}
-                        activeOpacity={0.8}
-                    >
-                        {uploading
-                            ? <ActivityIndicator color="#fff" size="large" />
-                            : (
-                                <View style={styles.submitButtonContent}>
-                                    <Ionicons name="checkmark-circle-outline" size={22} color="#fff" />
-                                    <Text style={styles.submitButtonText}>Submit for Approval</Text>
+                    {/* Government ID Section */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionTitleRow}>
+                            <Text style={styles.inputLabel}>Government ID Verification</Text>
+                            <Text style={styles.required}>*</Text>
+                            {govtIdType && idFrontUri && idBackUri && (
+                                <View style={styles.completedBadge}>
+                                    <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
                                 </View>
-                            )
-                        }
-                    </TouchableOpacity>
+                            )}
+                        </View>
+                        <Text style={styles.helperText}>Take clear photos of both sides of your ID for verification</Text>
 
-                    <Text style={styles.submitHelperText}>
-                        Your profile will be reviewed within 24-48 hours
-                    </Text>
+                        <View style={styles.idTypeGrid}>
+                            {GOVT_ID_TYPES.map(idType => (
+                                <TouchableOpacity
+                                    key={idType.value}
+                                    style={[
+                                        styles.idTypePill,
+                                        govtIdType === idType.value && {
+                                            backgroundColor: `${ACCENT}15`,
+                                            borderColor: ACCENT,
+                                            borderWidth: 2,
+                                        },
+                                    ]}
+                                    onPress={() => setGovtIdType(idType.value)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={[styles.idTypeText, govtIdType === idType.value && { color: ACCENT, fontWeight: '700' }]}>
+                                        {idType.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
 
-                    <TouchableOpacity 
-                        style={styles.logoutButton} 
-                        onPress={handleLogout} 
-                        disabled={isLoggingOut || uploading} 
-                        activeOpacity={0.7}
-                    >
-                        <Ionicons name="log-out-outline" size={18} color="#cc0000" />
-                        <Text style={styles.logoutText}>{isLoggingOut ? 'Logging out...' : 'Logout'}</Text>
-                    </TouchableOpacity>
-                </View>
-            </ScrollView>
+                        <View style={styles.idPickersRow}>
+                            {renderIdPicker(
+                                'Front Side',
+                                idFrontUri,
+                                () => handleCameraOpen('idFront')
+                            )}
+                            {renderIdPicker(
+                                'Back Side',
+                                idBackUri,
+                                () => handleCameraOpen('idBack')
+                            )}
+                        </View>
+                    </View>
+
+                    {/* Submit Section */}
+                    <View style={styles.submitSection}>
+                        <TouchableOpacity
+                            style={[
+                                styles.submitButton,
+                                { backgroundColor: currentServiceColor() },
+                                (!isFormValid() || uploading) && styles.buttonDisabled,
+                            ]}
+                            onPress={handleContinue}
+                            disabled={!isFormValid() || uploading}
+                            activeOpacity={0.8}
+                        >
+                            {uploading
+                                ? <ActivityIndicator color="#fff" size="large" />
+                                : (
+                                    <View style={styles.submitButtonContent}>
+                                        <Ionicons name="checkmark-circle-outline" size={22} color="#fff" />
+                                        <Text style={styles.submitButtonText}>Submit for Approval</Text>
+                                    </View>
+                                )
+                            }
+                        </TouchableOpacity>
+
+                        <Text style={styles.submitHelperText}>
+                            Your profile will be reviewed within 24-48 hours
+                        </Text>
+
+                        <TouchableOpacity
+                            style={styles.logoutButton}
+                            onPress={handleLogout}
+                            disabled={isLoggingOut || uploading}
+                            activeOpacity={0.7}
+                        >
+                            <Ionicons name="log-out-outline" size={18} color="#cc0000" />
+                            <Text style={styles.logoutText}>{isLoggingOut ? 'Logging out...' : 'Logout'}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </ScrollView>
+            </KeyboardAvoidingView>
 
             <ExpandableMapSelector
                 visible={showMapSelector}
@@ -702,7 +712,6 @@ const MistriOnboardingProfile = React.memo(() => {
                 accentColor={currentServiceColor()}
             />
 
-            {/* Custom Camera */}
             <CustomCamera
                 visible={cameraVisible}
                 onClose={handleCameraClose}
@@ -714,11 +723,14 @@ const MistriOnboardingProfile = React.memo(() => {
 });
 
 const styles = StyleSheet.create({
-    safeArea: { 
-        flex: 1, 
-        backgroundColor: '#f8fafc' 
+    safeArea: {
+        flex: 1,
+        backgroundColor: '#f8fafc',
     },
-    
+    keyboardAvoid: {
+        flex: 1,
+    },
+
     // Progress Header
     progressHeader: {
         backgroundColor: '#ffffff',
@@ -746,7 +758,6 @@ const styles = StyleSheet.create({
     progressPercentage: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#179d2e',
     },
     progressBarBackground: {
         height: 8,
@@ -757,110 +768,104 @@ const styles = StyleSheet.create({
     progressBarFill: {
         height: '100%',
         borderRadius: 4,
-        transition: 'width 0.3s ease',
     },
-    
-    scrollContent: { 
-        flexGrow: 1, 
-        paddingHorizontal: 20, 
-        paddingTop: 24, 
-        paddingBottom: 40 
+
+    scrollContent: {
+        flexGrow: 1,
+        paddingHorizontal: SCROLL_H_PADDING,
+        paddingTop: 24,
+        paddingBottom: 40,
     },
-    
-    headerSection: { 
-        alignItems: 'flex-start', 
-        marginBottom: 24,
+
+    headerSection: {
+        alignItems: 'flex-start',
+        marginBottom: 20,
         backgroundColor: '#ffffff',
-        padding: 20,
+        padding: SECTION_H_PADDING,
         borderRadius: 16,
         borderWidth: 1,
         borderColor: '#e5e7eb',
     },
-    logo: { 
-        width: 60, 
-        height: 60, 
-        marginBottom: 16 
+    logo: {
+        width: 60,
+        height: 60,
+        marginBottom: 16,
     },
-    title: { 
-        fontSize: 28, 
-        fontWeight: '800', 
-        color: '#111827', 
+    title: {
+        fontSize: 28,
+        fontWeight: '800',
+        color: '#111827',
         marginBottom: 8,
         letterSpacing: -0.5,
     },
-    subtitle: { 
-        fontSize: 15, 
-        color: '#6b7280', 
-        lineHeight: 22 
+    subtitle: {
+        fontSize: 15,
+        color: '#6b7280',
+        lineHeight: 22,
     },
-    
+
     // Sections
-    section: { 
+    section: {
         marginBottom: 20,
         backgroundColor: '#ffffff',
-        padding: 20,
+        padding: SECTION_H_PADDING,
         borderRadius: 16,
         borderWidth: 1,
         borderColor: '#e5e7eb',
     },
-    sectionHeader: { 
-        flexDirection: 'row', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        marginBottom: 8 
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
     },
     sectionTitleRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
     },
-    inputLabel: { 
-        fontSize: 16, 
-        fontWeight: '700', 
-        color: '#111827' 
+    inputLabel: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#111827',
     },
-    required: { 
-        color: '#ef4444', 
+    required: {
+        color: '#ef4444',
         fontSize: 18,
         fontWeight: '700',
     },
     completedBadge: {
         marginLeft: 4,
     },
-    helperText: { 
-        fontSize: 13, 
-        color: '#6b7280', 
-        marginBottom: 14, 
-        lineHeight: 18 
+    helperText: {
+        fontSize: 13,
+        color: '#6b7280',
+        marginBottom: 14,
+        lineHeight: 18,
     },
-    bulkActions: { 
-        flexDirection: 'row', 
+    bulkActions: {
+        flexDirection: 'row',
         gap: 8,
         backgroundColor: '#f3f4f6',
         borderRadius: 8,
         padding: 2,
     },
-    bulkAction: { 
-        paddingHorizontal: 12, 
+    bulkAction: {
+        paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: 6,
     },
-    bulkActionText: { 
-        fontSize: 12, 
-        color: '#179d2e', 
-        fontWeight: '600' 
+    bulkActionText: {
+        fontSize: 12,
+        color: '#2563eb',
+        fontWeight: '600',
     },
-    
-    // Divider
-    divider: {
-        height: 12,
-    },
-    
+
     // Inputs
-    inputWrapper: { 
-        borderWidth: 2, 
-        borderColor: '#e5e7eb', 
-        borderRadius: 12, 
+    inputWrapper: {
+        borderWidth: 2,
+        borderColor: '#e5e7eb',
+        borderRadius: 12,
         backgroundColor: '#f9fafb',
         marginBottom: 4,
     },
@@ -872,23 +877,23 @@ const styles = StyleSheet.create({
         borderColor: '#22c55e',
         backgroundColor: '#f0fdf4',
     },
-    textInput: { 
-        paddingHorizontal: 16, 
-        paddingVertical: 14, 
-        fontSize: 16, 
-        color: '#111827' 
+    textInput: {
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        fontSize: 16,
+        color: '#111827',
     },
-    textArea: { 
-        height: 120, 
-        textAlignVertical: 'top' 
+    textArea: {
+        height: 120,
+        textAlignVertical: 'top',
     },
-    errorText: { 
-        color: '#ef4444', 
-        fontSize: 13, 
+    errorText: {
+        color: '#ef4444',
+        fontSize: 13,
         marginTop: 6,
         fontWeight: '500',
     },
-    
+
     // Avatar
     avatarPlaceholder: {
         width: 130,
@@ -908,10 +913,10 @@ const styles = StyleSheet.create({
     avatarPlaceholderCompleted: {
         borderColor: '#22c55e',
     },
-    avatar: { 
-        width: 130, 
-        height: 130, 
-        borderRadius: 65 
+    avatar: {
+        width: 130,
+        height: 130,
+        borderRadius: 65,
     },
     avatarEmpty: {
         flex: 1,
@@ -920,10 +925,10 @@ const styles = StyleSheet.create({
         backgroundColor: '#f9fafb',
         gap: 8,
     },
-    avatarEmptyText: { 
-        fontSize: 13, 
-        color: '#9ca3af', 
-        fontWeight: '500' 
+    avatarEmptyText: {
+        fontSize: 13,
+        color: '#9ca3af',
+        fontWeight: '500',
     },
     cameraOverlay: {
         position: 'absolute',
@@ -937,20 +942,19 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         gap: 6,
     },
-    retakeText: { 
-        color: 'white', 
-        fontSize: 12, 
-        fontWeight: '600' 
+    retakeText: {
+        color: 'white',
+        fontSize: 12,
+        fontWeight: '600',
     },
-    
+
     // Services Grid
     servicesGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 12,
+        gap: CARD_GAP,
     },
     serviceCard: {
-        width: (WINDOW_WIDTH - 80) / 2,
         backgroundColor: '#ffffff',
         borderRadius: 16,
         padding: 16,
@@ -994,13 +998,13 @@ const styles = StyleSheet.create({
         shadowRadius: 4,
         elevation: 4,
     },
-    
+
     // Experience Pills
-    pillRow: { 
-        flexDirection: 'row', 
-        flexWrap: 'wrap', 
+    pillRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 10,
-        marginTop: 4 
+        marginTop: 4,
     },
     expPill: {
         paddingVertical: 12,
@@ -1015,12 +1019,12 @@ const styles = StyleSheet.create({
         shadowRadius: 3,
         elevation: 2,
     },
-    pillText: { 
-        fontSize: 14, 
-        color: '#6b7280', 
-        fontWeight: '500' 
+    pillText: {
+        fontSize: 14,
+        color: '#6b7280',
+        fontWeight: '500',
     },
-    
+
     // Location
     locationCard: {
         flexDirection: 'row',
@@ -1034,20 +1038,20 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 3,
     },
-    locationLabel: { 
-        fontSize: 15, 
-        fontWeight: '600', 
-        color: '#111827', 
-        marginBottom: 4 
+    locationLabel: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#111827',
+        marginBottom: 4,
     },
-    locationCoords: { 
-        fontSize: 13, 
-        color: '#6b7280', 
-        fontFamily: 'monospace' 
+    locationCoords: {
+        fontSize: 13,
+        color: '#6b7280',
+        fontFamily: 'monospace',
     },
-    changeBtn: { 
-        paddingHorizontal: 16, 
-        paddingVertical: 8, 
+    changeBtn: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
         borderRadius: 10,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
@@ -1055,10 +1059,10 @@ const styles = StyleSheet.create({
         shadowRadius: 4,
         elevation: 3,
     },
-    changeBtnText: { 
-        color: '#ffffff', 
-        fontSize: 14, 
-        fontWeight: '600' 
+    changeBtnText: {
+        color: '#ffffff',
+        fontSize: 14,
+        fontWeight: '600',
     },
     mapPickerButton: {
         flexDirection: 'row',
@@ -1070,17 +1074,17 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         backgroundColor: '#f9fafb',
     },
-    mapPickerText: { 
-        fontSize: 16, 
-        fontWeight: '600' 
+    mapPickerText: {
+        fontSize: 16,
+        fontWeight: '600',
     },
-    
+
     // Government ID
-    idTypeGrid: { 
-        flexDirection: 'row', 
-        flexWrap: 'wrap', 
-        gap: 8, 
-        marginBottom: 20 
+    idTypeGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 20,
     },
     idTypePill: {
         paddingVertical: 10,
@@ -1095,14 +1099,14 @@ const styles = StyleSheet.create({
         shadowRadius: 3,
         elevation: 2,
     },
-    idTypeText: { 
-        fontSize: 14, 
-        color: '#6b7280', 
-        fontWeight: '500' 
+    idTypeText: {
+        fontSize: 14,
+        color: '#6b7280',
+        fontWeight: '500',
     },
-    idPickersRow: { 
-        flexDirection: 'row', 
-        gap: 12 
+    idPickersRow: {
+        flexDirection: 'row',
+        gap: 12,
     },
     idPickerButton: {
         flex: 1,
@@ -1128,18 +1132,18 @@ const styles = StyleSheet.create({
         backgroundColor: '#f9fafb',
         gap: 8,
     },
-    idPickerLabel: { 
-        fontSize: 14, 
-        color: '#6b7280', 
-        fontWeight: '600' 
+    idPickerLabel: {
+        fontSize: 14,
+        color: '#6b7280',
+        fontWeight: '600',
     },
-    idPickerSubLabel: { 
-        fontSize: 12, 
-        color: '#9ca3af' 
+    idPickerSubLabel: {
+        fontSize: 12,
+        color: '#9ca3af',
     },
-    idThumbnail: { 
-        width: '100%', 
-        height: '100%' 
+    idThumbnail: {
+        width: '100%',
+        height: '100%',
     },
     idPickerOverlay: {
         position: 'absolute',
@@ -1165,23 +1169,23 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         gap: 6,
     },
-    
+
     // Submit Section
     submitSection: {
         marginTop: 8,
         marginBottom: 20,
     },
-    submitButton: { 
-        paddingVertical: 18, 
-        borderRadius: 14, 
+    submitButton: {
+        paddingVertical: 18,
+        borderRadius: 14,
         alignItems: 'center',
-        shadowColor: '#000',
+        shadowColor: '#2563eb',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.15,
         shadowRadius: 8,
         elevation: 6,
     },
-    buttonDisabled: { 
+    buttonDisabled: {
         backgroundColor: '#d1d5db',
         shadowOpacity: 0,
         elevation: 0,
@@ -1191,9 +1195,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 10,
     },
-    submitButtonText: { 
-        color: '#fff', 
-        fontSize: 18, 
+    submitButtonText: {
+        color: '#fff',
+        fontSize: 18,
         fontWeight: '700',
         letterSpacing: 0.5,
     },
@@ -1211,12 +1215,12 @@ const styles = StyleSheet.create({
         paddingVertical: 16,
         gap: 8,
     },
-    logoutText: { 
-        color: '#cc0000', 
-        fontSize: 15, 
-        fontWeight: '500' 
+    logoutText: {
+        color: '#cc0000',
+        fontSize: 15,
+        fontWeight: '500',
     },
-    
+
     // Loading
     loadingContainer: {
         flex: 1,

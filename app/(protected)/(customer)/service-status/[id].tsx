@@ -156,7 +156,8 @@ export default function ServiceStatusScreen() {
     try {
       setError(null);
       
-      const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/service-requests/${id}`;
+      // ✅ FIXED: Use the correct endpoint for customers
+      const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/users/service-requests/${id}`;
       console.log('📡 Fetching from:', url);
       
       const response = await makeAuthenticatedRequest(url);
@@ -171,7 +172,8 @@ export default function ServiceStatusScreen() {
       console.log('📦 Response data:', data);
       
       if (response.ok && data.success) {
-        setRequest(data.request);
+        const requestData = data.request || data;
+        setRequest(requestData);
         if (data.mistriDetails) {
           setRequest(prev => prev ? { ...prev, mistriDetails: data.mistriDetails } : null);
         }

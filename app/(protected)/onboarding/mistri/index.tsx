@@ -1,3 +1,4 @@
+//app/(protected)/onboarding/mistri/index.tsx
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, Platform, Linking } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';

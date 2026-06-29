@@ -14,10 +14,10 @@ type IoniconName = ComponentProps<typeof Ionicons>['name'];
  */
 interface ServiceCategoryFromDB {
     id: number;
-    name: string;                    // ✅ Changed from serviceName to name
+    name: string;
     description: string | null;
-    iconUrl: string | null;          // ✅ Changed from mapIconColor to iconUrl
-    iconColor: string | null;        // ✅ Added iconColor
+    iconUrl: string | null;
+    iconColor: string | null;
     isActive: boolean;
     displayOrder: number;
     subCategoryCount?: number;
@@ -28,21 +28,21 @@ interface ServiceCategoryFromDB {
  */
 export interface EnrichedService {
     id: number;
-    serviceName: string;              // Maps from name field
-    name: string;                     // Original name field
+    serviceName: string;
+    name: string;
     description: string | null;
-    color: string;                    // DB color or fallback from dictionary
-    icon: IoniconName;                // From dictionary
-    iconSelected: IoniconName;        // From dictionary
-    displayName: string;              // Formatted name from dictionary or capitalized serviceName
+    color: string;
+    icon: IoniconName;
+    iconSelected: IoniconName;
+    displayName: string;
     isActive: boolean;
-    iconUrl: string | null;           // Custom icon URL
+    iconUrl: string | null;
     subCategoryCount?: number;
 }
 
 interface ServicesContextType {
-    services: EnrichedService[];      // All enriched services
-    activeServices: EnrichedService[]; // Only active services
+    services: EnrichedService[];
+    activeServices: EnrichedService[];
     isLoading: boolean;
     error: Error | null;
     getServiceByName: (name: string) => EnrichedService | undefined;
@@ -52,28 +52,72 @@ interface ServicesContextType {
 
 const ServicesContext = createContext<ServicesContextType | undefined>(undefined);
 
+// ✅ Fallback categories
+const getFallbackCategories = (): ServiceCategoryFromDB[] => {
+    return [
+        { id: 1, name: 'Plumber', description: 'Professional plumbing services', iconUrl: null, iconColor: '#e67e22', isActive: true, displayOrder: 1 },
+        { id: 2, name: 'Electrician', description: 'Professional electrical services', iconUrl: null, iconColor: '#f1c40f', isActive: true, displayOrder: 2 },
+        { id: 3, name: 'Painter', description: 'Professional painting services', iconUrl: null, iconColor: '#3498db', isActive: true, displayOrder: 3 },
+        { id: 4, name: 'Carpenter', description: 'Professional carpentry services', iconUrl: null, iconColor: '#2ecc71', isActive: true, displayOrder: 4 },
+        { id: 5, name: 'Cleaner', description: 'Professional cleaning services', iconUrl: null, iconColor: '#1abc9c', isActive: true, displayOrder: 5 },
+        { id: 6, name: 'AC Repair', description: 'Professional AC repair services', iconUrl: null, iconColor: '#9b59b6', isActive: true, displayOrder: 6 },
+        { id: 7, name: 'General', description: 'General services', iconUrl: null, iconColor: '#95a5a6', isActive: true, displayOrder: 7 },
+    ];
+};
 
-// Update the fetchServices function
+// ✅ Fetch from service-hierarchy endpoint
 const fetchServices = async (): Promise<ServiceCategoryFromDB[]> => {
-    // ✅ Use public endpoint
-    const response = await fetch(`${API_BASE_URL}/api/public/categories`);
-    if (!response.ok) {
-        throw new Error('Failed to fetch service categories');
+    try {
+        const url = `${API_BASE_URL}/api/public/service-hierarchy`;
+        console.log('📡 Fetching services from hierarchy:', url);
+        
+        const response = await fetch(url, {
+            headers: {
+                'ngrok-skip-browser-warning': 'true',
+            },
+        });
+        
+        console.log('📡 Hierarchy response status:', response.status);
+        
+        if (!response.ok) {
+            console.warn(`⚠️ Hierarchy API returned ${response.status}, using fallback categories`);
+            return getFallbackCategories();
+        }
+        
+        const data = await response.json();
+        console.log('📦 Hierarchy data received:', data);
+        
+        // Check if we got valid data
+        if (data?.success && data?.hierarchy && data.hierarchy.length > 0) {
+            // Convert hierarchy categories to ServiceCategoryFromDB format
+            // Each category in hierarchy has: id, name, description, iconUrl, iconColor, displayOrder, subCategories, totalItems
+            return data.hierarchy.map((cat: any) => ({
+                id: cat.id,
+                name: cat.name,
+                description: cat.description || null,
+                iconUrl: cat.iconUrl || null,
+                iconColor: cat.iconColor || null,
+                isActive: true,
+                displayOrder: cat.displayOrder || 0,
+                subCategoryCount: cat.subCategories?.length || 0,
+            }));
+        }
+        
+        // If no data, use fallback
+        console.warn('⚠️ No categories in hierarchy response, using fallback');
+        return getFallbackCategories();
+        
+    } catch (error) {
+        console.error('❌ Error fetching services from hierarchy:', error);
+        // Return fallback categories on error
+        return getFallbackCategories();
     }
-    const data = await response.json();
-    
-    // Handle response format
-    if (data?.success && data?.categories) {
-        return data.categories;
-    }
-    return [];
 };
 
 /**
  * Enriches a service category from the database with display configuration
  */
 const enrichService = (dbService: ServiceCategoryFromDB): EnrichedService => {
-    // Use name field (which exists in service_categories)
     const serviceName = dbService.name || dbService.serviceName || 'Unnamed';
     const config = getServiceConfig(serviceName);
 
@@ -82,13 +126,10 @@ const enrichService = (dbService: ServiceCategoryFromDB): EnrichedService => {
         serviceName: serviceName,
         name: dbService.name || serviceName,
         description: dbService.description,
-        // Use DB color if available, otherwise fallback to dictionary default
         color: dbService.iconColor || config.defaultColor,
         icon: config.icon,
         iconSelected: config.iconSelected,
-        // Use dictionary display name or capitalize the service name
-        displayName: config.displayName ||
-                    serviceName.charAt(0).toUpperCase() + serviceName.slice(1),
+        displayName: config.displayName || serviceName.charAt(0).toUpperCase() + serviceName.slice(1),
         isActive: dbService.isActive !== false,
         iconUrl: dbService.iconUrl || null,
         subCategoryCount: dbService.subCategoryCount || 0,
@@ -97,16 +138,26 @@ const enrichService = (dbService: ServiceCategoryFromDB): EnrichedService => {
 
 export const ServicesProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const { data: rawServices = [], isLoading, error } = useQuery({
-        queryKey: ['service-categories'],
+        queryKey: ['service-hierarchy'],
         queryFn: fetchServices,
         staleTime: 5 * 60 * 1000, // 5 minutes
         gcTime: 10 * 60 * 1000, // 10 minutes
+        retry: 2,
     });
+
+    console.log('🔍 ServicesProvider - rawServices count:', rawServices?.length || 0);
+    console.log('🔍 ServicesProvider - rawServices:', JSON.stringify(rawServices, null, 2));
 
     // Enrich all services with display configuration
     const services = useMemo(() => {
+        if (!rawServices || rawServices.length === 0) {
+            return [];
+        }
         return rawServices.map(enrichService);
     }, [rawServices]);
+
+    console.log('🔍 ServicesProvider - enriched services count:', services.length);
+    console.log('🔍 ServicesProvider - enriched services:', JSON.stringify(services, null, 2));
 
     // Filter to only active services
     const activeServices = useMemo(() => {
