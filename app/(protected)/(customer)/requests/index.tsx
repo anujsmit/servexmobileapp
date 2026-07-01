@@ -15,6 +15,38 @@ import { useUIStore } from '../../../../store/useUIStore';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../../../context/AuthContext';
 
+// ============================================
+// BLUE THEME CONSTANTS
+// ============================================
+
+const THEME = {
+    primary: '#2563eb',
+    primaryLight: '#3b82f6',
+    primaryDark: '#1d4ed8',
+    primaryBg: 'rgba(37, 99, 235, 0.08)',
+    gradientStart: '#2563eb',
+    gradientEnd: '#1d4ed8',
+    text: '#000000',
+    textSecondary: '#333333',
+    textTertiary: '#666666',
+    textInverse: '#ffffff',
+    border: '#e2e8f0',
+    borderLight: '#f1f5f9',
+    white: '#ffffff',
+    background: '#f8fafc',
+    surface: '#ffffff',
+    success: '#22c55e',
+    successBg: 'rgba(34, 197, 94, 0.08)',
+    error: '#ef4444',
+    errorBg: 'rgba(239, 68, 68, 0.08)',
+    warning: '#f59e0b',
+    warningBg: 'rgba(245, 158, 11, 0.08)',
+    pending: '#f59e0b',
+    assigned: '#2563eb',
+    completed: '#22c55e',
+    cancelled: '#ef4444',
+};
+
 type FilterType = 'all' | 'service_request' | 'order' | 'consultation';
 type SortOrder = 'newest' | 'oldest';
 
@@ -62,25 +94,21 @@ export default function MyRequests() {
         
         setLoading(true);
         try {
-            // Fetch service requests
             const serviceResponse = await fetch(`${API_URL}/api/users/service-requests`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const serviceData = await serviceResponse.json();
             
-            // Fetch orders
             const orderResponse = await fetch(`${API_URL}/api/users/orders`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const orderData = await orderResponse.json();
             
-            // Fetch consultations
             const consultationResponse = await fetch(`${API_URL}/api/users/consultations/my`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const consultationData = await consultationResponse.json();
 
-            // Process service requests
             const serviceRequests = (serviceData.requests || []).map((req: any) => ({
                 id: `service_${req.id}`,
                 originalId: req.id,
@@ -94,7 +122,6 @@ export default function MyRequests() {
                 unpaid: req.unpaid || false,
             }));
 
-            // Process orders
             const orders = (orderData.orders || []).map((order: any) => ({
                 id: `order_${order.id}`,
                 originalId: order.id,
@@ -108,7 +135,6 @@ export default function MyRequests() {
                 createdAt: order.createdAt,
             }));
 
-            // Process consultations
             const consultations = (consultationData.consultations || []).map((consultation: any) => ({
                 id: `consultation_${consultation.id}`,
                 originalId: consultation.id,
@@ -123,15 +149,12 @@ export default function MyRequests() {
                 urgency: consultation.urgency,
             }));
 
-            // Combine all requests
             let allRequests = [...serviceRequests, ...orders, ...consultations];
 
-            // Apply filters
             if (filterType !== 'all') {
                 allRequests = allRequests.filter(req => req.type === filterType);
             }
 
-            // Apply sorting
             allRequests.sort((a, b) => {
                 const dateA = new Date(a.createdAt).getTime();
                 const dateB = new Date(b.createdAt).getTime();
@@ -140,7 +163,6 @@ export default function MyRequests() {
 
             setCombinedRequests(allRequests);
 
-            // Calculate stats
             const statsData = {
                 total: allRequests.length,
                 pending: allRequests.filter(r => r.status === 'pending').length,
@@ -206,13 +228,12 @@ export default function MyRequests() {
         if (cancellingIds.has(consultationId)) return;
         setCancellingIds(prev => new Set(prev).add(consultationId));
         try {
-            await fetch(`${API_URL}/api/users/consultations/${consultationId}/status`, {
-                method: 'PUT',
+            await fetch(`${API_URL}/api/users/consultations/${consultationId}/cancel`, {
+                method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${token}`,
                 },
-                body: JSON.stringify({ status: 'cancelled' }),
             });
             fetchAllRequests();
         } catch {
@@ -243,20 +264,20 @@ export default function MyRequests() {
 
     const getStatusColor = (status: string) => {
         const colors: Record<string, string> = {
-            'pending': '#f59e0b',
-            'assigned': '#3b82f6',
-            'confirmed': '#3b82f6',
+            'pending': THEME.pending,
+            'assigned': THEME.assigned,
+            'confirmed': THEME.assigned,
             'in_progress': '#8b5cf6',
-            'completed': '#22c55e',
-            'canceled': '#ef4444',
-            'cancelled': '#ef4444',
-            'rejected': '#ef4444',
-            'Pending Approval': '#f59e0b',
-            'Assigned': '#3b82f6',
-            'Completed ✅': '#22c55e',
-            'Canceled': '#ef4444',
-            'Cancelled': '#ef4444',
-            'Rejected': '#ef4444',
+            'completed': THEME.completed,
+            'canceled': THEME.cancelled,
+            'cancelled': THEME.cancelled,
+            'rejected': THEME.cancelled,
+            'Pending Approval': THEME.pending,
+            'Assigned': THEME.assigned,
+            'Completed ✅': THEME.completed,
+            'Canceled': THEME.cancelled,
+            'Cancelled': THEME.cancelled,
+            'Rejected': THEME.cancelled,
         };
         return colors[status] || '#6b7280';
     };
@@ -264,13 +285,13 @@ export default function MyRequests() {
     const getTypeIcon = (type: string) => {
         switch (type) {
             case 'service_request':
-                return { icon: 'handyman', color: '#2563eb', bg: '#eff6ff' };
+                return { icon: 'handyman', color: THEME.primary, bg: THEME.primaryBg };
             case 'order':
-                return { icon: 'shopping-cart', color: '#10b981', bg: '#ecfdf5' };
+                return { icon: 'shopping-cart', color: THEME.success, bg: THEME.successBg };
             case 'consultation':
-                return { icon: 'chatbubbles', color: '#8b5cf6', bg: '#f3e8ff' };
+                return { icon: 'chatbubbles', color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.08)' };
             default:
-                return { icon: 'help', color: '#6b7280', bg: '#f3f4f6' };
+                return { icon: 'help', color: THEME.textTertiary, bg: THEME.background };
         }
     };
 
@@ -343,7 +364,7 @@ export default function MyRequests() {
 
         return (
             <TouchableOpacity
-                style={styles.requestCard}
+                style={[styles.requestCard, { backgroundColor: THEME.white, borderColor: THEME.borderLight }]}
                 onPress={() => handleRequestPress(item)}
                 activeOpacity={0.8}
             >
@@ -359,18 +380,18 @@ export default function MyRequests() {
                                 {typeLabel}
                             </Text>
                         </View>
-                        <Text style={styles.requestType} numberOfLines={1}>
+                        <Text style={[styles.requestType, { color: THEME.text }]} numberOfLines={1}>
                             {item.title}
                         </Text>
                     </View>
                     <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-                        <Text style={styles.statusText}>
+                        <Text style={[styles.statusText, { color: THEME.textInverse }]}>
                             {item.statusLabel}
                         </Text>
                     </View>
                 </View>
 
-                <Text style={styles.address} numberOfLines={2}>
+                <Text style={[styles.address, { color: THEME.textSecondary }]} numberOfLines={2}>
                     {item.address}
                 </Text>
 
@@ -378,9 +399,9 @@ export default function MyRequests() {
                     <View style={styles.urgencyBadge}>
                         <Text style={[
                             styles.urgencyText,
-                            item.urgency === 'emergency' && { color: '#ef4444' },
-                            item.urgency === 'urgent' && { color: '#f59e0b' },
-                            item.urgency === 'normal' && { color: '#6b7280' },
+                            item.urgency === 'emergency' && { color: THEME.error },
+                            item.urgency === 'urgent' && { color: THEME.warning },
+                            item.urgency === 'normal' && { color: THEME.textTertiary },
                         ]}>
                             {item.urgency.charAt(0).toUpperCase() + item.urgency.slice(1)}
                         </Text>
@@ -389,40 +410,40 @@ export default function MyRequests() {
 
                 <View style={styles.detailsRow}>
                     <View style={styles.detailItem}>
-                        <MaterialIcons name="receipt" size={14} color="#9ca3af" />
-                        <Text style={styles.detailText}>
+                        <MaterialIcons name="receipt" size={14} color={THEME.textTertiary} />
+                        <Text style={[styles.detailText, { color: THEME.textSecondary }]}>
                             {isService ? 'Request' : isOrder ? `${item.itemCount || 0} items` : 'Consultation'}
                         </Text>
                     </View>
                     {!isConsultation && (
                         <View style={styles.detailItem}>
-                            <MaterialIcons name="attach-money" size={14} color="#10b981" />
-                            <Text style={[styles.detailText, styles.priceText]}>
+                            <MaterialIcons name="attach-money" size={14} color={THEME.success} />
+                            <Text style={[styles.detailText, styles.priceText, { color: THEME.success }]}>
                                 रु {item.total?.toLocaleString() || 0}
                             </Text>
                         </View>
                     )}
                 </View>
 
-                <View style={styles.cardFooter}>
+                <View style={[styles.cardFooter, { borderTopColor: THEME.borderLight }]}>
                     <View style={styles.footerLeft}>
                         <View style={styles.detailItem}>
-                            <MaterialIcons name="calendar-today" size={14} color="#9ca3af" />
-                            <Text style={styles.detailText}>
+                            <MaterialIcons name="calendar-today" size={14} color={THEME.textTertiary} />
+                            <Text style={[styles.detailText, { color: THEME.textSecondary }]}>
                                 {formatDate(item.createdAt)}
                             </Text>
                         </View>
                         {item.unpaid && (
-                            <View style={styles.unpaidInfo}>
-                                <MaterialIcons name="warning" size={12} color="#dc2626" />
-                                <Text style={styles.unpaidText}>Payment Pending</Text>
+                            <View style={[styles.unpaidInfo, { backgroundColor: THEME.errorBg }]}>
+                                <MaterialIcons name="warning" size={12} color={THEME.error} />
+                                <Text style={[styles.unpaidText, { color: THEME.error }]}>Payment Pending</Text>
                             </View>
                         )}
                     </View>
 
                     {isCancellable && (
                         <TouchableOpacity
-                            style={styles.cancelButton}
+                            style={[styles.cancelButton, { backgroundColor: THEME.errorBg, borderColor: THEME.error + '40' }]}
                             onPress={() => {
                                 if (isService) {
                                     handleCancelServiceRequest(item.originalId);
@@ -435,11 +456,11 @@ export default function MyRequests() {
                             disabled={cancellingIds.has(item.originalId)}
                         >
                             {cancellingIds.has(item.originalId) ? (
-                                <ActivityIndicator size="small" color="#ef4444" />
+                                <ActivityIndicator size="small" color={THEME.error} />
                             ) : (
                                 <>
-                                    <MaterialIcons name="cancel" size={16} color="#ef4444" />
-                                    <Text style={styles.cancelText}>Cancel</Text>
+                                    <MaterialIcons name="cancel" size={16} color={THEME.error} />
+                                    <Text style={[styles.cancelText, { color: THEME.error }]}>Cancel</Text>
                                 </>
                             )}
                         </TouchableOpacity>
@@ -456,8 +477,8 @@ export default function MyRequests() {
                     title="My Requests"
                     subtitle="View and manage all your service requests"
                 />
-                <View style={styles.loading}>
-                    <ActivityIndicator size="large" color="#2563eb" />
+                <View style={[styles.loading, { backgroundColor: THEME.background }]}>
+                    <ActivityIndicator size="large" color={THEME.primary} />
                 </View>
             </SafeAreaContainer>
         );
@@ -470,57 +491,55 @@ export default function MyRequests() {
                 subtitle="View and manage all your service requests"
             />
 
-            {/* Stats Summary */}
             {stats && (
-                <View style={styles.statsContainer}>
+                <View style={[styles.statsContainer, { backgroundColor: THEME.white, borderColor: THEME.border }]}>
                     <View style={styles.statItem}>
-                        <Text style={styles.statNumber}>{stats.total}</Text>
-                        <Text style={styles.statLabel}>Total</Text>
+                        <Text style={[styles.statNumber, { color: THEME.text }]}>{stats.total}</Text>
+                        <Text style={[styles.statLabel, { color: THEME.textSecondary }]}>Total</Text>
                     </View>
-                    <View style={styles.statDivider} />
+                    <View style={[styles.statDivider, { backgroundColor: THEME.border }]} />
                     <View style={styles.statItem}>
-                        <Text style={[styles.statNumber, { color: '#f59e0b' }]}>{stats.pending}</Text>
-                        <Text style={styles.statLabel}>Pending</Text>
+                        <Text style={[styles.statNumber, { color: THEME.pending }]}>{stats.pending}</Text>
+                        <Text style={[styles.statLabel, { color: THEME.textSecondary }]}>Pending</Text>
                     </View>
-                    <View style={styles.statDivider} />
+                    <View style={[styles.statDivider, { backgroundColor: THEME.border }]} />
                     <View style={styles.statItem}>
-                        <Text style={[styles.statNumber, { color: '#3b82f6' }]}>{stats.assigned}</Text>
-                        <Text style={styles.statLabel}>Assigned</Text>
+                        <Text style={[styles.statNumber, { color: THEME.assigned }]}>{stats.assigned}</Text>
+                        <Text style={[styles.statLabel, { color: THEME.textSecondary }]}>Assigned</Text>
                     </View>
-                    <View style={styles.statDivider} />
+                    <View style={[styles.statDivider, { backgroundColor: THEME.border }]} />
                     <View style={styles.statItem}>
-                        <Text style={[styles.statNumber, { color: '#10b981' }]}>{stats.completed}</Text>
-                        <Text style={styles.statLabel}>Completed</Text>
+                        <Text style={[styles.statNumber, { color: THEME.completed }]}>{stats.completed}</Text>
+                        <Text style={[styles.statLabel, { color: THEME.textSecondary }]}>Completed</Text>
                     </View>
                 </View>
             )}
 
-            {/* Filters Header */}
-            <View style={styles.filtersHeader}>
+            <View style={[styles.filtersHeader, { backgroundColor: THEME.white, borderBottomColor: THEME.borderLight }]}>
                 <TouchableOpacity
                     style={styles.filtersToggle}
                     onPress={() => toggleFilters()}
                     activeOpacity={0.7}
                 >
                     <View style={styles.filtersToggleContent}>
-                        <Ionicons name="filter-outline" size={20} color="#374151" />
-                        <Text style={styles.filtersToggleText}>Filters & Sort</Text>
-                        <View style={styles.filterCountBadge}>
-                            <Text style={styles.filterCountText}>{combinedRequests.length}</Text>
+                        <Ionicons name="filter-outline" size={20} color={THEME.textSecondary} />
+                        <Text style={[styles.filtersToggleText, { color: THEME.text }]}>Filters & Sort</Text>
+                        <View style={[styles.filterCountBadge, { backgroundColor: THEME.primaryBg, borderColor: THEME.primary + '40' }]}>
+                            <Text style={[styles.filterCountText, { color: THEME.primary }]}>{combinedRequests.length}</Text>
                         </View>
                     </View>
                     <MaterialIcons
                         name={showFilters ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
                         size={24}
-                        color="#6b7280"
+                        color={THEME.textTertiary}
                     />
                 </TouchableOpacity>
             </View>
 
             {showFilters && (
-                <View style={styles.filtersContainer}>
+                <View style={[styles.filtersContainer, { backgroundColor: THEME.white, borderColor: THEME.border }]}>
                     <View style={styles.filterSection}>
-                        <Text style={styles.filterTitle}>Request Type</Text>
+                        <Text style={[styles.filterTitle, { color: THEME.textSecondary }]}>Request Type</Text>
                         <View style={styles.filterButtons}>
                             {renderFilterButton('all', 'All')}
                             {renderFilterButton('service_request', 'Services')}
@@ -530,7 +549,7 @@ export default function MyRequests() {
                     </View>
 
                     <View style={styles.filterSection}>
-                        <Text style={styles.filterTitle}>Sort by Date</Text>
+                        <Text style={[styles.filterTitle, { color: THEME.textSecondary }]}>Sort by Date</Text>
                         <View style={styles.sortButtons}>
                             {renderSortButton('newest', 'Newest First')}
                             {renderSortButton('oldest', 'Oldest First')}
@@ -540,10 +559,10 @@ export default function MyRequests() {
             )}
 
             {combinedRequests?.length === 0 ? (
-                <View style={styles.empty}>
-                    <MaterialIcons name="inbox" size={64} color="#d1d5db" />
-                    <Text style={styles.emptyText}>No requests found</Text>
-                    <Text style={styles.emptySubtext}>
+                <View style={[styles.empty, { backgroundColor: THEME.background }]}>
+                    <MaterialIcons name="inbox" size={64} color={THEME.textTertiary} />
+                    <Text style={[styles.emptyText, { color: THEME.text }]}>No requests found</Text>
+                    <Text style={[styles.emptySubtext, { color: THEME.textSecondary }]}>
                         {filterType !== 'all' 
                             ? `No ${filterType === 'service_request' ? 'service' : filterType === 'order' ? 'order' : 'consultation'} requests` 
                             : 'You haven\'t made any requests yet'}
@@ -562,7 +581,7 @@ export default function MyRequests() {
                         <RefreshControl
                             refreshing={refreshing}
                             onRefresh={onRefresh}
-                            colors={['#2563eb']}
+                            colors={[THEME.primary]}
                         />
                     }
                 />
@@ -579,14 +598,12 @@ const styles = StyleSheet.create({
     },
     statsContainer: {
         flexDirection: 'row',
-        backgroundColor: '#ffffff',
         paddingVertical: 16,
         paddingHorizontal: 16,
         marginHorizontal: 16,
         marginBottom: 12,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#e5e7eb',
         justifyContent: 'space-around',
         alignItems: 'center',
         shadowColor: '#000',
@@ -602,11 +619,9 @@ const styles = StyleSheet.create({
     statNumber: {
         fontSize: 20,
         fontWeight: '700',
-        color: '#111827',
     },
     statLabel: {
         fontSize: 11,
-        color: '#6b7280',
         marginTop: 4,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -615,12 +630,9 @@ const styles = StyleSheet.create({
     statDivider: {
         width: 1,
         height: 32,
-        backgroundColor: '#e5e7eb',
     },
     filtersHeader: {
-        backgroundColor: '#ffffff',
         borderBottomWidth: 1,
-        borderBottomColor: '#f3f4f6',
         marginHorizontal: 16,
         borderRadius: 12,
         marginBottom: 8,
@@ -635,7 +647,6 @@ const styles = StyleSheet.create({
     filtersToggleText: {
         fontSize: 15,
         fontWeight: '600',
-        color: '#374151',
         marginLeft: 8,
     },
     filtersToggleContent: {
@@ -643,27 +654,22 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     filterCountBadge: {
-        backgroundColor: '#eff6ff',
         borderRadius: 12,
         paddingHorizontal: 8,
         paddingVertical: 2,
         marginLeft: 8,
         borderWidth: 1,
-        borderColor: '#bfdbfe',
     },
     filterCountText: {
-        color: '#2563eb',
         fontSize: 11,
         fontWeight: '700',
     },
     filtersContainer: {
-        backgroundColor: '#ffffff',
         padding: 16,
         marginHorizontal: 16,
         marginBottom: 12,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#e5e7eb',
     },
     filterSection: {
         marginBottom: 16,
@@ -671,7 +677,6 @@ const styles = StyleSheet.create({
     filterTitle: {
         fontSize: 13,
         fontWeight: '600',
-        color: '#6b7280',
         marginBottom: 10,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -686,20 +691,20 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#d1d5db',
-        backgroundColor: '#f9fafb',
+        borderColor: THEME.border,
+        backgroundColor: THEME.background,
     },
     filterButtonActive: {
-        backgroundColor: '#2563eb',
-        borderColor: '#2563eb',
+        backgroundColor: THEME.primary,
+        borderColor: THEME.primary,
     },
     filterButtonText: {
-        color: '#4b5563',
+        color: THEME.textSecondary,
         fontSize: 13,
         fontWeight: '600',
     },
     filterButtonTextActive: {
-        color: '#ffffff',
+        color: THEME.textInverse,
     },
     sortButtons: {
         flexDirection: 'row',
@@ -710,20 +715,20 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#d1d5db',
-        backgroundColor: '#f9fafb',
+        borderColor: THEME.border,
+        backgroundColor: THEME.background,
     },
     sortButtonActive: {
-        backgroundColor: '#10b981',
-        borderColor: '#10b981',
+        backgroundColor: THEME.success,
+        borderColor: THEME.success,
     },
     sortButtonText: {
-        color: '#4b5563',
+        color: THEME.textSecondary,
         fontSize: 13,
         fontWeight: '600',
     },
     sortButtonTextActive: {
-        color: '#ffffff',
+        color: THEME.textInverse,
     },
     empty: {
         flex: 1,
@@ -734,13 +739,11 @@ const styles = StyleSheet.create({
     emptyText: {
         fontSize: 18,
         fontWeight: '700',
-        color: '#4b5563',
         marginTop: 16,
         marginBottom: 8,
     },
     emptySubtext: {
         fontSize: 14,
-        color: '#9ca3af',
         textAlign: 'center',
     },
     listContainer: {
@@ -749,12 +752,10 @@ const styles = StyleSheet.create({
         paddingBottom: 100,
     },
     requestCard: {
-        backgroundColor: '#ffffff',
         padding: 16,
         borderRadius: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: '#f3f4f6',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 1 },
         shadowOpacity: 0.05,
@@ -790,7 +791,6 @@ const styles = StyleSheet.create({
     requestType: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#111827',
         flexShrink: 1,
     },
     statusBadge: {
@@ -800,15 +800,14 @@ const styles = StyleSheet.create({
         alignSelf: 'flex-start',
     },
     statusText: {
-        color: '#ffffff',
         fontWeight: '700',
         fontSize: 10,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
+        color: '#ffffff',
     },
     address: {
         fontSize: 14,
-        color: '#6b7280',
         marginBottom: 12,
         lineHeight: 20,
     },
@@ -833,19 +832,16 @@ const styles = StyleSheet.create({
     },
     detailText: {
         fontSize: 13,
-        color: '#6b7280',
         fontWeight: '500',
     },
     priceText: {
         fontWeight: '700',
-        color: '#10b981',
     },
     cardFooter: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         borderTopWidth: 1,
-        borderTopColor: '#f3f4f6',
         paddingTop: 12,
         marginTop: 4,
     },
@@ -860,12 +856,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 4,
         padding: 4,
-        backgroundColor: '#fef2f2',
         borderRadius: 6,
     },
     unpaidText: {
         fontSize: 11,
-        color: '#dc2626',
         fontWeight: '700',
     },
     cancelButton: {
@@ -873,14 +867,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 6,
         paddingHorizontal: 12,
-        backgroundColor: '#fef2f2',
         borderRadius: 8,
         borderWidth: 1,
-        borderColor: '#fecaca',
         gap: 4,
     },
     cancelText: {
-        color: '#ef4444',
         fontWeight: '700',
         fontSize: 12,
     },

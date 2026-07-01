@@ -166,7 +166,8 @@ export default function MistriDashboard() {
 
     const todayEarnings = earningsData?.summary?.totalEarnings || 0;
     const completedCount = profile?.jobsCompleted || 0;
-    const rating = profile?.averageRating || 0;
+    // FIX: Ensure rating is always a number
+    const rating = profile?.averageRating ? Number(profile.averageRating) : 0;
     const serviceType = profile?.serviceName || 'Service Provider';
     const isAvailable = profile?.isAvailable ?? true;
 
@@ -547,7 +548,10 @@ export default function MistriDashboard() {
                         <View style={[styles.statIcon, { backgroundColor: '#fef3c7' }]}>
                             <MaterialIcons name="star" size={20} color="#f59e0b" />
                         </View>
-                        <Text style={styles.statValue}>{rating > 0 ? rating.toFixed(1) : 'New'}</Text>
+                        {/* FIX: Safely handle rating display */}
+                        <Text style={styles.statValue}>
+                            {rating > 0 ? Number(rating).toFixed(1) : 'New'}
+                        </Text>
                         <Text style={styles.statLabel}>Rating Profile</Text>
                         {rating > 0 ? (
                             <View style={styles.ratingStars}>

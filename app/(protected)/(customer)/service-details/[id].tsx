@@ -33,6 +33,37 @@ import { useAddToCart } from '../../../../hooks/cart';
 const { width } = Dimensions.get('window');
 
 // ============================================
+// BLUE THEME CONSTANTS
+// ============================================
+
+const BLUE = {
+    primary: '#2563eb',
+    primaryLight: '#3b82f6',
+    primaryDark: '#1d4ed8',
+    primaryBg: 'rgba(37, 99, 235, 0.08)',
+    primaryBgLight: 'rgba(37, 99, 235, 0.12)',
+    primaryBgMedium: 'rgba(37, 99, 235, 0.15)',
+    gradientStart: '#2563eb',
+    gradientEnd: '#1d4ed8',
+    text: '#000000',
+    textSecondary: '#333333',
+    textTertiary: '#666666',
+    textInverse: '#ffffff',
+    border: '#e2e8f0',
+    borderLight: '#f1f5f9',
+    white: '#ffffff',
+    black: '#000000',
+    background: '#f8fafc',
+    surface: '#ffffff',
+    success: '#22c55e',
+    successBg: 'rgba(34, 197, 94, 0.08)',
+    error: '#ef4444',
+    errorBg: 'rgba(239, 68, 68, 0.08)',
+    warning: '#f59e0b',
+    warningBg: 'rgba(245, 158, 11, 0.08)',
+};
+
+// ============================================
 // TYPES
 // ============================================
 
@@ -101,11 +132,10 @@ export default function ServiceDetailsScreen() {
     const { mutateAsync: addToCart } = useAddToCart();
 
     // Dynamic theming from category color
-    const primaryColor = (categoryColor as string) || '#2563eb';
+    const primaryColor = (categoryColor as string) || BLUE.primary;
 
     const [service, setService] = useState<ServiceDetails | null>(null);
     const [loading, setLoading] = useState(true);
-    const [bookingModalVisible, setBookingModalVisible] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [isInCart, setIsInCart] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
@@ -151,9 +181,9 @@ export default function ServiceDetailsScreen() {
     useEffect(() => {
         navigation.setOptions({
             title: (name as string) || 'Service Details',
-            headerTitleStyle: { fontWeight: '600', fontSize: 18, color: '#0f172a' },
+            headerTitleStyle: { fontWeight: '600', fontSize: 18, color: BLUE.text },
             headerShadowVisible: false,
-            headerStyle: { backgroundColor: '#ffffff' },
+            headerStyle: { backgroundColor: BLUE.white },
         });
         fetchServiceDetails();
     }, [id]);
@@ -402,7 +432,8 @@ export default function ServiceDetailsScreen() {
         }
     };
 
-    const handleOrderNow = () => {
+    // ✅ FIXED: Order Now adds to cart directly
+    const handleOrderNow = async () => {
         if (!contextCoordinates) {
             Alert.alert(
                 'Location Required',
@@ -414,105 +445,38 @@ export default function ServiceDetailsScreen() {
             );
             return;
         }
+        
         if (!token) {
             Alert.alert('Error', 'Please login to continue');
             router.replace('/(auth)/login');
             return;
         }
 
-        if (isInCart) {
-            router.push('/cart');
+        if (!service) {
+            Alert.alert('Error', 'Service not available');
             return;
         }
 
-        setBookingModalVisible(true);
-    };
+        // ✅ Add to cart directly
+        if (isUpdating) return;
+        setIsUpdating(true);
 
-// app/(protected)/(customer)/service-details/[id].tsx
-
-// ============================================
-// CART & BOOKING ACTIONS - FIXED
-// ============================================
-
-const handleConfirmBooking = async () => {
-    setSubmitting(true);
-    try {
-        let serviceType =
-            (categoryName as string) ||
-            service?.categoryName ||
-            service?.name ||
-            (id as string);
-        serviceType = serviceType.replace(/\s*Service\s*/gi, '').trim();
-
-        const serviceTypeMap: Record<string, string> = {
-            plumber: 'plumber',
-            Plumber: 'plumber',
-            electrician: 'electrician',
-            Electrician: 'electrician',
-            painter: 'painter',
-            Painter: 'painter',
-            carpenter: 'carpenter',
-            Carpenter: 'carpenter',
-            cleaning: 'cleaning',
-            Cleaning: 'cleaning',
-            plumbing: 'plumber',
-            Plumbing: 'plumber',
-            electrical: 'electrician',
-            Electrical: 'electrician',
-            tap: 'plumber',
-            pipe: 'plumber',
-        };
-
-        const finalServiceType =
-            serviceTypeMap[serviceType] || serviceType.toLowerCase() || 'plumber';
-
-        // ✅ FIXED: Use the correct endpoint for customers
-        const requestBody = {
-            type: finalServiceType,
-            platformServiceIds: [id],
-            coords: {
-                lat: contextCoordinates?.latitude || 27.7172,
-                lng: contextCoordinates?.longitude || 85.324,
-            },
-            address: contextAddress || 'Kathmandu, Nepal',
-            source: 'gps',
-        };
-
-        console.log('📤 Sending booking request:', requestBody);
-
-        // ✅ FIXED: Use the correct endpoint
-        const response = await makeAuthenticatedRequest(
-            `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/users/service-requests`, // ✅ Changed from /api/service-requests
-            {
-                method: 'POST',
-                body: JSON.stringify(requestBody),
-            },
-        );
-
-        const data = await response.json();
-        console.log('📥 Booking response:', data);
-
-        if (response.ok && data.success) {
-            setBookingModalVisible(false);
-            setBookingData({
-                requestId: data.requestId || data.request?.id || 'SR' + Date.now().toString().slice(-6),
-                serviceName: service?.name || 'Service',
-            });
-            setSuccessModalVisible(true);
+        try {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            await addToCart({ serviceItemId: service.id, quantity: 1 });
+            setIsInCart(true);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } else {
-            Alert.alert('Error', data.message || 'Failed to submit booking');
+            
+            // ✅ Navigate to cart directly
+            router.push('/cart');
+        } catch (error) {
+            console.error('Error adding to cart:', error);
+            Alert.alert('Error', 'Failed to add to cart. Please try again.');
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        } finally {
+            setIsUpdating(false);
         }
-    } catch (error: any) {
-        console.error('❌ Error submitting booking:', error);
-        if (error.message !== 'Session expired') {
-            Alert.alert('Error', error.message || 'Network error. Please try again.');
-        }
-    } finally {
-        setSubmitting(false);
-    }
-};
+    };
 
     const makeAuthenticatedRequest = async (url: string, options: RequestInit = {}) => {
         let currentToken = token;
@@ -611,7 +575,7 @@ const handleConfirmBooking = async () => {
                 </View>
 
                 {/* ---- Service Info ---- */}
-                <View style={styles.infoContainer}>
+                <View style={[styles.infoContainer, { backgroundColor: BLUE.white }]}>
                     {categoryName && (
                         <View
                             style={[
@@ -625,12 +589,12 @@ const handleConfirmBooking = async () => {
                         </View>
                     )}
 
-                    <Text style={styles.serviceName}>{data.name}</Text>
+                    <Text style={[styles.serviceName, { color: BLUE.text }]}>{data.name}</Text>
 
                     {service?.duration_minutes && (
                         <View style={styles.durationRow}>
-                            <Ionicons name="time-outline" size={16} color="#64748b" />
-                            <Text style={styles.durationText}>
+                            <Ionicons name="time-outline" size={16} color={BLUE.textTertiary} />
+                            <Text style={[styles.durationText, { color: BLUE.textSecondary }]}>
                                 {service.duration_minutes} minutes estimated
                             </Text>
                         </View>
@@ -638,13 +602,13 @@ const handleConfirmBooking = async () => {
 
                     {data.description && (
                         <View style={styles.section}>
-                            <Text style={styles.sectionTitle}>Description</Text>
-                            <Text style={styles.descriptionText}>{data.description}</Text>
+                            <Text style={[styles.sectionTitle, { color: BLUE.text }]}>Description</Text>
+                            <Text style={[styles.descriptionText, { color: BLUE.textSecondary }]}>{data.description}</Text>
                         </View>
                     )}
 
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>What&apos;s Included</Text>
+                        <Text style={[styles.sectionTitle, { color: BLUE.text }]}>What&apos;s Included</Text>
                         <View style={styles.featuresList}>
                             {[
                                 { icon: 'verified', label: 'Professional & insured' },
@@ -654,7 +618,7 @@ const handleConfirmBooking = async () => {
                             ].map((feat) => (
                                 <View key={feat.icon} style={styles.featureItem}>
                                     <MaterialIcons name={feat.icon as any} size={20} color={primaryColor} />
-                                    <Text style={styles.featureText}>{feat.label}</Text>
+                                    <Text style={[styles.featureText, { color: BLUE.textSecondary }]}>{feat.label}</Text>
                                 </View>
                             ))}
                         </View>
@@ -662,7 +626,7 @@ const handleConfirmBooking = async () => {
 
                     {/* ---- Location ---- */}
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Service Location</Text>
+                        <Text style={[styles.sectionTitle, { color: BLUE.text }]}>Service Location</Text>
                         <TouchableOpacity
                             style={[
                                 styles.locationCard,
@@ -680,12 +644,12 @@ const handleConfirmBooking = async () => {
                                 <Ionicons name="location-sharp" size={22} color={primaryColor} />
                             </View>
                             <View style={styles.locationInfo}>
-                                <Text style={styles.locationLabel}>Your Address</Text>
-                                <Text style={styles.locationAddress} numberOfLines={2}>
+                                <Text style={[styles.locationLabel, { color: BLUE.textTertiary }]}>Your Address</Text>
+                                <Text style={[styles.locationAddress, { color: BLUE.text }]} numberOfLines={2}>
                                     {contextAddress || 'Tap to set your location'}
                                 </Text>
                             </View>
-                            <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
+                            <MaterialIcons name="chevron-right" size={20} color={BLUE.textTertiary} />
                         </TouchableOpacity>
                     </View>
 
@@ -704,9 +668,9 @@ const handleConfirmBooking = async () => {
         const data = getServiceData();
 
         return (
-            <View style={styles.footer}>
+            <View style={[styles.footer, { backgroundColor: BLUE.white, borderTopColor: BLUE.border }]}>
                 <View style={styles.priceContainer}>
-                    <Text style={styles.priceLabel}>Price</Text>
+                    <Text style={[styles.priceLabel, { color: BLUE.textTertiary }]}>Price</Text>
                     <Text style={[styles.priceAmount, { color: primaryColor }]}>
                         रु {parseFloat(data.price || '0').toLocaleString('en-IN')}
                     </Text>
@@ -722,6 +686,7 @@ const handleConfirmBooking = async () => {
                                     backgroundColor: hexToRgba(primaryColor, 0.06),
                                 },
                             ],
+                            { borderColor: BLUE.border, backgroundColor: BLUE.white },
                         ]}
                         onPress={handleAddToCart}
                         disabled={isUpdating}
@@ -730,10 +695,10 @@ const handleConfirmBooking = async () => {
                         <Ionicons
                             name={isInCart ? 'checkmark-circle' : 'cart-outline'}
                             size={20}
-                            color={isInCart ? primaryColor : '#64748b'}
+                            color={isInCart ? primaryColor : BLUE.textTertiary}
                         />
                         <Text
-                            style={[styles.addButtonText, isInCart && { color: primaryColor }]}
+                            style={[styles.addButtonText, isInCart && { color: primaryColor }, { color: BLUE.textSecondary }]}
                         >
                             {isInCart ? 'Added' : 'Cart'}
                         </Text>
@@ -747,118 +712,11 @@ const handleConfirmBooking = async () => {
                         {isTokenRefreshing ? (
                             <ActivityIndicator color="#fff" size="small" />
                         ) : (
-                            <Text style={styles.bookButtonText}>Order Now</Text>
+                            <Text style={[styles.bookButtonText, { color: BLUE.textInverse }]}>Order Now</Text>
                         )}
                     </TouchableOpacity>
                 </View>
             </View>
-        );
-    };
-
-    // ============================================
-    // RENDER: BOOKING MODAL
-    // ============================================
-
-    const renderBookingModal = () => {
-        const data = getServiceData();
-        const priceNum = parseFloat(data.price || '0');
-
-        return (
-            <Modal
-                visible={bookingModalVisible}
-                animationType="slide"
-                transparent={true}
-                onRequestClose={() => setBookingModalVisible(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <TouchableWithoutFeedback onPress={() => setBookingModalVisible(false)}>
-                        <View style={styles.modalOverlayTapArea} />
-                    </TouchableWithoutFeedback>
-
-                    <View style={styles.modalContent}>
-                        {/* Handle bar */}
-                        <View style={styles.modalHandleBar} />
-
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Confirm Booking</Text>
-                            <TouchableOpacity
-                                onPress={() => setBookingModalVisible(false)}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            >
-                                <Ionicons name="close" size={24} color="#64748b" />
-                            </TouchableOpacity>
-                        </View>
-
-                        <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                            <View style={styles.serviceSummary}>
-                                <View style={styles.serviceSummaryInfo}>
-                                    <Text style={styles.summaryServiceName}>{data.name}</Text>
-                                    {categoryName && (
-                                        <Text style={styles.summaryCategory}>{categoryName}</Text>
-                                    )}
-                                </View>
-                                <Text style={[styles.summaryPrice, { color: primaryColor }]}>
-                                    रु {priceNum.toLocaleString('en-IN')}
-                                </Text>
-                            </View>
-
-                            <View
-                                style={[
-                                    styles.locationSummary,
-                                    { borderColor: hexToRgba(primaryColor, 0.15) },
-                                ]}
-                            >
-                                <MaterialIcons name="location-on" size={20} color={primaryColor} />
-                                <Text style={styles.locationSummaryText}>
-                                    {contextAddress || 'Location not set'}
-                                </Text>
-                            </View>
-
-                            <View style={styles.priceBreakdown}>
-                                <View style={styles.breakdownRow}>
-                                    <Text style={styles.breakdownLabel}>Service Charge</Text>
-                                    <Text style={styles.breakdownValue}>
-                                        रु {priceNum.toLocaleString('en-IN')}
-                                    </Text>
-                                </View>
-                                <View style={styles.breakdownDivider} />
-                                <View style={styles.breakdownTotal}>
-                                    <Text style={styles.totalLabel}>Total Amount</Text>
-                                    <Text style={[styles.totalAmount, { color: primaryColor }]}>
-                                        रु {priceNum.toLocaleString('en-IN')}
-                                    </Text>
-                                </View>
-                                <Text style={styles.paymentNote}>
-                                    Payment will be made directly to the professional after service
-                                    completion
-                                </Text>
-                            </View>
-                        </ScrollView>
-
-                        <View style={styles.modalFooter}>
-                            <TouchableOpacity
-                                style={styles.cancelButton}
-                                onPress={() => setBookingModalVisible(false)}
-                                activeOpacity={0.7}
-                            >
-                                <Text style={styles.cancelButtonText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.confirmButton, { backgroundColor: primaryColor }]}
-                                onPress={handleConfirmBooking}
-                                disabled={submitting}
-                                activeOpacity={0.85}
-                            >
-                                {submitting ? (
-                                    <ActivityIndicator color="#fff" size="small" />
-                                ) : (
-                                    <Text style={styles.confirmButtonText}>Confirm Booking</Text>
-                                )}
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            </Modal>
         );
     };
 
@@ -874,7 +732,7 @@ const handleConfirmBooking = async () => {
                 transparent={false}
                 onRequestClose={() => setShowLocationModal(false)}
             >
-                <SafeAreaView style={styles.locationModalSafeArea} edges={['top']}>
+                <SafeAreaView style={[styles.locationModalSafeArea, { backgroundColor: BLUE.background }]} edges={['top']}>
                     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
                         <View style={styles.modalContainer}>
                             <View style={styles.modalHeader}>
@@ -883,14 +741,14 @@ const handleConfirmBooking = async () => {
                                     style={styles.modalCloseButton}
                                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                 >
-                                    <Ionicons name="close" size={24} color="#0f172a" />
+                                    <Ionicons name="close" size={24} color={BLUE.text} />
                                 </TouchableOpacity>
-                                <Text style={styles.modalTitle}>Select Location</Text>
+                                <Text style={[styles.modalTitle, { color: BLUE.text }]}>Select Location</Text>
                                 <View style={{ width: 40 }} />
                             </View>
 
                             {/* Method selector */}
-                            <View style={styles.methodSelector}>
+                            <View style={[styles.methodSelector, { backgroundColor: BLUE.white, borderColor: BLUE.border }]}>
                                 {(['auto', 'manual'] as const).map((method) => (
                                     <TouchableOpacity
                                         key={method}
@@ -907,7 +765,7 @@ const handleConfirmBooking = async () => {
                                         <Ionicons
                                             name={method === 'auto' ? 'location' : 'create-outline'}
                                             size={20}
-                                            color={locationMethod === method ? primaryColor : '#64748b'}
+                                            color={locationMethod === method ? primaryColor : BLUE.textTertiary}
                                         />
                                         <Text
                                             style={[
@@ -916,6 +774,7 @@ const handleConfirmBooking = async () => {
                                                     color: primaryColor,
                                                     fontWeight: '600',
                                                 },
+                                                { color: BLUE.textSecondary },
                                             ]}
                                         >
                                             {method === 'auto' ? 'Auto Detect' : 'Enter Manually'}
@@ -935,13 +794,13 @@ const handleConfirmBooking = async () => {
                                     : renderManualLocation()}
                             </ScrollView>
 
-                            <View style={styles.modalFooter}>
+                            <View style={[styles.modalFooter, { borderTopColor: BLUE.border }]}>
                                 <TouchableOpacity
-                                    style={styles.cancelButton}
+                                    style={[styles.cancelButton, { borderColor: BLUE.border, backgroundColor: BLUE.white }]}
                                     onPress={() => setShowLocationModal(false)}
                                     activeOpacity={0.7}
                                 >
-                                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                                    <Text style={[styles.cancelButtonText, { color: BLUE.textSecondary }]}>Cancel</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     style={[
@@ -953,7 +812,7 @@ const handleConfirmBooking = async () => {
                                     disabled={!tempMarkerLocation}
                                     activeOpacity={0.85}
                                 >
-                                    <Text style={styles.confirmButtonText}>Confirm Location</Text>
+                                    <Text style={[styles.confirmButtonText, { color: BLUE.textInverse }]}>Confirm Location</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -975,8 +834,8 @@ const handleConfirmBooking = async () => {
                     >
                         <Ionicons name="locate" size={48} color={primaryColor} />
                     </View>
-                    <Text style={styles.detectTitle}>Detect Your Location</Text>
-                    <Text style={styles.detectSubtitle}>
+                    <Text style={[styles.detectTitle, { color: BLUE.text }]}>Detect Your Location</Text>
+                    <Text style={[styles.detectSubtitle, { color: BLUE.textSecondary }]}>
                         We&apos;ll use your GPS to find your current location
                     </Text>
                     <TouchableOpacity
@@ -990,7 +849,7 @@ const handleConfirmBooking = async () => {
                         ) : (
                             <>
                                 <Ionicons name="location-sharp" size={20} color="#fff" />
-                                <Text style={styles.detectButtonText}>Detect Location</Text>
+                                <Text style={[styles.detectButtonText, { color: BLUE.textInverse }]}>Detect Location</Text>
                             </>
                         )}
                     </TouchableOpacity>
@@ -1040,14 +899,14 @@ const handleConfirmBooking = async () => {
                         </View>
                     </Marker>
                 </MapView>
-                <View style={styles.mapAddressContainer}>
+                <View style={[styles.mapAddressContainer, { backgroundColor: 'rgba(255,255,255,0.95)' }]}>
                     <Ionicons name="location-sharp" size={18} color={primaryColor} />
-                    <Text style={styles.mapAddressText} numberOfLines={2}>
+                    <Text style={[styles.mapAddressText, { color: BLUE.text }]} numberOfLines={2}>
                         {locationAddress || 'Drag pin to set location'}
                     </Text>
                 </View>
                 <TouchableOpacity
-                    style={[styles.recenterButton, { borderColor: primaryColor }]}
+                    style={[styles.recenterButton, { borderColor: primaryColor, backgroundColor: BLUE.white }]}
                     onPress={detectCurrentLocation}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
@@ -1065,14 +924,14 @@ const handleConfirmBooking = async () => {
                     <View
                         style={[
                             styles.searchInputContainer,
-                            { borderColor: hexToRgba(primaryColor, 0.3) },
+                            { borderColor: hexToRgba(primaryColor, 0.3), backgroundColor: BLUE.white },
                         ]}
                     >
-                        <Feather name="search" size={20} color="#94a3b8" />
+                        <Feather name="search" size={20} color={BLUE.textTertiary} />
                         <TextInput
-                            style={styles.searchAddressInput}
+                            style={[styles.searchAddressInput, { color: BLUE.text }]}
                             placeholder="Search for a location..."
-                            placeholderTextColor="#94a3b8"
+                            placeholderTextColor={BLUE.textTertiary}
                             value={searchQuery}
                             onChangeText={(text) => {
                                 setSearchQuery(text);
@@ -1088,7 +947,7 @@ const handleConfirmBooking = async () => {
                                 }}
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >
-                                <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                                <Ionicons name="close-circle" size={18} color={BLUE.textTertiary} />
                             </TouchableOpacity>
                         )}
                     </View>
@@ -1096,16 +955,16 @@ const handleConfirmBooking = async () => {
                     {isSearchingAddress && (
                         <View style={styles.searchingContainer}>
                             <ActivityIndicator size="small" color={primaryColor} />
-                            <Text style={styles.searchingText}>Searching...</Text>
+                            <Text style={[styles.searchingText, { color: BLUE.textSecondary }]}>Searching...</Text>
                         </View>
                     )}
 
                     {searchResults.length > 0 && (
-                        <View style={styles.searchResultsContainer}>
+                        <View style={[styles.searchResultsContainer, { backgroundColor: BLUE.white, borderColor: BLUE.border }]}>
                             {searchResults.map((result, index) => (
                                 <TouchableOpacity
                                     key={index}
-                                    style={styles.searchResultItem}
+                                    style={[styles.searchResultItem, { borderBottomColor: BLUE.borderLight }]}
                                     onPress={() => handleSelectSearchResult(result)}
                                     activeOpacity={0.7}
                                 >
@@ -1122,10 +981,10 @@ const handleConfirmBooking = async () => {
                                         />
                                     </View>
                                     <View style={styles.searchResultTextContainer}>
-                                        <Text style={styles.searchResultTitle} numberOfLines={1}>
+                                        <Text style={[styles.searchResultTitle, { color: BLUE.text }]} numberOfLines={1}>
                                             {result.display_name.split(',')[0]}
                                         </Text>
-                                        <Text style={styles.searchResultSubtitle} numberOfLines={2}>
+                                        <Text style={[styles.searchResultSubtitle, { color: BLUE.textSecondary }]} numberOfLines={2}>
                                             {result.display_name}
                                         </Text>
                                     </View>
@@ -1135,20 +994,20 @@ const handleConfirmBooking = async () => {
                     )}
                 </View>
 
-                {/* Manual address text input — THIS WAS MISSING */}
+                {/* Manual address text input */}
                 <View style={styles.manualInputWrapper}>
-                    <Text style={styles.manualInputLabel}>Or type your address</Text>
+                    <Text style={[styles.manualInputLabel, { color: BLUE.text }]}>Or type your address</Text>
                     <View
                         style={[
                             styles.manualInputContainer,
-                            { borderColor: hexToRgba(primaryColor, 0.3) },
+                            { borderColor: hexToRgba(primaryColor, 0.3), backgroundColor: BLUE.white },
                         ]}
                     >
-                        <Ionicons name="create-outline" size={18} color="#94a3b8" />
+                        <Ionicons name="create-outline" size={18} color={BLUE.textTertiary} />
                         <TextInput
-                            style={styles.manualAddressInput}
+                            style={[styles.manualAddressInput, { color: BLUE.text }]}
                             placeholder="e.g. Lazimpat, Kathmandu"
-                            placeholderTextColor="#94a3b8"
+                            placeholderTextColor={BLUE.textTertiary}
                             value={manualAddress}
                             onChangeText={setManualAddress}
                             returnKeyType="done"
@@ -1160,7 +1019,7 @@ const handleConfirmBooking = async () => {
                             styles.geocodeButton,
                             { backgroundColor: primaryColor },
                             (isDetectingLocation || !manualAddress.trim()) &&
-                                styles.geocodeButtonDisabled,
+                            styles.geocodeButtonDisabled,
                         ]}
                         onPress={handleManualAddressSubmit}
                         disabled={isDetectingLocation || !manualAddress.trim()}
@@ -1171,7 +1030,7 @@ const handleConfirmBooking = async () => {
                         ) : (
                             <>
                                 <MaterialIcons name="my-location" size={18} color="#fff" />
-                                <Text style={styles.geocodeButtonText}>Find on Map</Text>
+                                <Text style={[styles.geocodeButtonText, { color: BLUE.textInverse }]}>Find on Map</Text>
                             </>
                         )}
                     </TouchableOpacity>
@@ -1182,11 +1041,11 @@ const handleConfirmBooking = async () => {
                     <View
                         style={[
                             styles.previewMapContainer,
-                            { borderColor: hexToRgba(primaryColor, 0.2) },
+                            { borderColor: hexToRgba(primaryColor, 0.2), backgroundColor: BLUE.white },
                         ]}
                     >
                         <View style={styles.previewMapHeader}>
-                            <Text style={styles.previewMapTitle}>Selected Location</Text>
+                            <Text style={[styles.previewMapTitle, { color: BLUE.text }]}>Selected Location</Text>
                             <TouchableOpacity
                                 onPress={() => {
                                     setTempMarkerLocation(null);
@@ -1220,9 +1079,9 @@ const handleConfirmBooking = async () => {
                                 </View>
                             </Marker>
                         </MapView>
-                        <View style={styles.previewAddressContainer}>
+                        <View style={[styles.previewAddressContainer, { borderTopColor: BLUE.borderLight }]}>
                             <Ionicons name="location-sharp" size={16} color={primaryColor} />
-                            <Text style={styles.previewAddressText} numberOfLines={2}>
+                            <Text style={[styles.previewAddressText, { color: BLUE.textSecondary }]} numberOfLines={2}>
                                 {locationAddress}
                             </Text>
                         </View>
@@ -1283,20 +1142,20 @@ const handleConfirmBooking = async () => {
 
                         {/* Success text */}
                         <Animated.View style={{ opacity: fadeAnim }}>
-                            <Text style={styles.successTitle}>Booking Confirmed!</Text>
+                            <Text style={[styles.successTitle, { color: BLUE.text }]}>Booking Confirmed!</Text>
                             <Animated.View
                                 style={{
                                     transform: [{ translateY: slideAnim }],
                                 }}
                             >
-                                <Text style={styles.successSubtitle}>
+                                <Text style={[styles.successSubtitle, { color: BLUE.textSecondary }]}>
                                     {bookingData?.serviceName || 'Your service'} has been booked
                                     successfully.
                                 </Text>
                                 {bookingData?.requestId && (
-                                    <View style={styles.requestIdContainer}>
-                                        <Text style={styles.requestIdLabel}>Request ID</Text>
-                                        <Text style={styles.requestIdValue}>
+                                    <View style={[styles.requestIdContainer, { backgroundColor: BLUE.background }]}>
+                                        <Text style={[styles.requestIdLabel, { color: BLUE.textTertiary }]}>Request ID</Text>
+                                        <Text style={[styles.requestIdValue, { color: BLUE.text }]}>
                                             {bookingData.requestId}
                                         </Text>
                                     </View>
@@ -1312,11 +1171,11 @@ const handleConfirmBooking = async () => {
                             ]}
                         >
                             <TouchableOpacity
-                                style={styles.successHomeButton}
+                                style={[styles.successHomeButton, { borderColor: BLUE.border, backgroundColor: BLUE.white }]}
                                 onPress={() => handleSuccessAction('home')}
                                 activeOpacity={0.7}
                             >
-                                <Text style={styles.successHomeButtonText}>Go Home</Text>
+                                <Text style={[styles.successHomeButtonText, { color: BLUE.textSecondary }]}>Go Home</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={[styles.successTrackButton, { backgroundColor: primaryColor }]}
@@ -1324,7 +1183,7 @@ const handleConfirmBooking = async () => {
                                 activeOpacity={0.85}
                             >
                                 <Ionicons name="navigate" size={18} color="#fff" />
-                                <Text style={styles.successTrackButtonText}>Track Status</Text>
+                                <Text style={[styles.successTrackButtonText, { color: BLUE.textInverse }]}>Track Status</Text>
                             </TouchableOpacity>
                         </Animated.View>
                     </Animated.View>
@@ -1339,15 +1198,15 @@ const handleConfirmBooking = async () => {
 
     if (loading) {
         return (
-            <View style={styles.loadingContainer}>
+            <View style={[styles.loadingContainer, { backgroundColor: BLUE.background }]}>
                 <ActivityIndicator size="large" color={primaryColor} />
-                <Text style={styles.loadingText}>Loading service details...</Text>
+                <Text style={[styles.loadingText, { color: BLUE.textSecondary }]}>Loading service details...</Text>
             </View>
         );
     }
 
     return (
-        <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: BLUE.background }]} edges={['bottom']}>
             <ScrollView
                 style={styles.scrollView}
                 showsVerticalScrollIndicator={false}
@@ -1357,7 +1216,6 @@ const handleConfirmBooking = async () => {
             </ScrollView>
 
             {renderFooter()}
-            {renderBookingModal()}
             {renderLocationModal()}
             {renderSuccessModal()}
         </SafeAreaView>
@@ -1371,13 +1229,12 @@ const handleConfirmBooking = async () => {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     scrollView: {
         flex: 1,
     },
     scrollContent: {
-        paddingBottom: 100, // space for fixed footer
+        paddingBottom: 100,
     },
 
     // ---- Loading ----
@@ -1385,12 +1242,10 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
     },
     loadingText: {
         marginTop: 12,
         fontSize: 14,
-        color: '#64748b',
     },
 
     // ---- Hero image ----
@@ -1442,7 +1297,6 @@ const styles = StyleSheet.create({
 
     // ---- Info section ----
     infoContainer: {
-        backgroundColor: '#ffffff',
         paddingHorizontal: 20,
         paddingTop: 20,
         borderTopLeftRadius: 20,
@@ -1461,7 +1315,6 @@ const styles = StyleSheet.create({
     serviceName: {
         fontSize: 22,
         fontWeight: '700',
-        color: '#0f172a',
         letterSpacing: -0.5,
         marginBottom: 4,
     },
@@ -1473,7 +1326,6 @@ const styles = StyleSheet.create({
     },
     durationText: {
         fontSize: 13,
-        color: '#64748b',
         fontWeight: '500',
     },
     section: {
@@ -1482,12 +1334,10 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#0f172a',
         marginBottom: 10,
     },
     descriptionText: {
         fontSize: 14,
-        color: '#475569',
         lineHeight: 22,
     },
     featuresList: {
@@ -1500,7 +1350,6 @@ const styles = StyleSheet.create({
     },
     featureText: {
         fontSize: 14,
-        color: '#475569',
         fontWeight: '500',
     },
 
@@ -1511,7 +1360,6 @@ const styles = StyleSheet.create({
         padding: 14,
         borderRadius: 14,
         borderWidth: 1.5,
-        backgroundColor: '#ffffff',
         gap: 12,
     },
     locationIconContainer: {
@@ -1527,7 +1375,6 @@ const styles = StyleSheet.create({
     },
     locationLabel: {
         fontSize: 11,
-        color: '#94a3b8',
         fontWeight: '600',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -1535,7 +1382,6 @@ const styles = StyleSheet.create({
     },
     locationAddress: {
         fontSize: 14,
-        color: '#0f172a',
         fontWeight: '500',
     },
     contentBottomSpacer: {
@@ -1548,9 +1394,7 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        backgroundColor: '#ffffff',
         borderTopWidth: 1,
-        borderTopColor: '#f1f5f9',
         paddingHorizontal: 16,
         paddingTop: 12,
         paddingBottom: Platform.OS === 'ios' ? 28 : 16,
@@ -1568,7 +1412,6 @@ const styles = StyleSheet.create({
     },
     priceLabel: {
         fontSize: 11,
-        color: '#94a3b8',
         fontWeight: '600',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -1590,8 +1433,6 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         borderRadius: 14,
         borderWidth: 1.5,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#ffffff',
         gap: 6,
     },
     addedButton: {
@@ -1600,7 +1441,6 @@ const styles = StyleSheet.create({
     addButtonText: {
         fontSize: 13,
         fontWeight: '600',
-        color: '#64748b',
     },
     bookButton: {
         flex: 1,
@@ -1615,181 +1455,14 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
     bookButtonText: {
+        fontSize: 14,
+        fontWeight: '700',
         color: '#ffffff',
-        fontSize: 14,
-        fontWeight: '700',
-    },
-
-    // ---- Booking modal ----
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.4)',
-        justifyContent: 'flex-end',
-    },
-    modalOverlayTapArea: {
-        flex: 1,
-    },
-    modalContent: {
-        backgroundColor: '#ffffff',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        maxHeight: '85%',
-    },
-    modalHandleBar: {
-        width: 40,
-        height: 4,
-        backgroundColor: '#e2e8f0',
-        borderRadius: 2,
-        alignSelf: 'center',
-        marginTop: 12,
-        marginBottom: 4,
-    },
-    modalHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingVertical: 12,
-    },
-    modalTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#0f172a',
-    },
-    modalBody: {
-        paddingHorizontal: 20,
-    },
-    modalFooter: {
-        flexDirection: 'row',
-        gap: 12,
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        borderTopWidth: 1,
-        borderTopColor: '#f1f5f9',
-    },
-    serviceSummary: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: 16,
-    },
-    serviceSummaryInfo: {
-        flex: 1,
-        marginRight: 12,
-    },
-    summaryServiceName: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#0f172a',
-    },
-    summaryCategory: {
-        fontSize: 13,
-        color: '#64748b',
-        marginTop: 2,
-    },
-    summaryPrice: {
-        fontSize: 18,
-        fontWeight: '700',
-        flexShrink: 0,
-    },
-    locationSummary: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        padding: 12,
-        borderRadius: 12,
-        borderWidth: 1,
-        backgroundColor: '#f8fafc',
-        marginBottom: 16,
-    },
-    locationSummaryText: {
-        flex: 1,
-        fontSize: 13,
-        color: '#475569',
-    },
-    priceBreakdown: {
-        backgroundColor: '#f8fafc',
-        borderRadius: 14,
-        padding: 16,
-        marginBottom: 8,
-    },
-    breakdownRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    breakdownLabel: {
-        fontSize: 14,
-        color: '#64748b',
-    },
-    breakdownValue: {
-        fontSize: 14,
-        color: '#0f172a',
-        fontWeight: '500',
-    },
-    breakdownDivider: {
-        height: 1,
-        backgroundColor: '#e2e8f0',
-        marginVertical: 12,
-    },
-    breakdownTotal: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    totalLabel: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#0f172a',
-    },
-    totalAmount: {
-        fontSize: 15,
-        fontWeight: '700',
-    },
-    paymentNote: {
-        fontSize: 11,
-        color: '#94a3b8',
-        marginTop: 12,
-        lineHeight: 16,
-    },
-    cancelButton: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 13,
-        borderRadius: 14,
-        borderWidth: 1.5,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#ffffff',
-    },
-    cancelButtonText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#64748b',
-    },
-    confirmButton: {
-        flex: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 13,
-        borderRadius: 14,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.12,
-        shadowRadius: 8,
-        elevation: 3,
-    },
-    confirmButtonDisabled: {
-        opacity: 0.5,
-    },
-    confirmButtonText: {
-        color: '#ffffff',
-        fontSize: 14,
-        fontWeight: '700',
     },
 
     // ---- Location modal ----
     locationModalSafeArea: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     modalContainer: {
         flex: 1,
@@ -1803,10 +1476,8 @@ const styles = StyleSheet.create({
     methodSelector: {
         flexDirection: 'row',
         marginHorizontal: 20,
-        backgroundColor: '#ffffff',
         borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#e2e8f0',
         padding: 4,
     },
     methodButton: {
@@ -1824,7 +1495,6 @@ const styles = StyleSheet.create({
     },
     methodText: {
         fontSize: 13,
-        color: '#64748b',
         fontWeight: '500',
     },
     locationModalBody: {
@@ -1853,12 +1523,10 @@ const styles = StyleSheet.create({
     detectTitle: {
         fontSize: 18,
         fontWeight: '700',
-        color: '#0f172a',
         marginBottom: 6,
     },
     detectSubtitle: {
         fontSize: 14,
-        color: '#64748b',
         textAlign: 'center',
         lineHeight: 20,
         marginBottom: 24,
@@ -1878,9 +1546,9 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
     detectButtonText: {
-        color: '#ffffff',
         fontSize: 15,
         fontWeight: '600',
+        color: '#ffffff',
     },
 
     // ---- Map ----
@@ -1924,7 +1592,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        backgroundColor: 'rgba(255,255,255,0.95)',
         padding: 10,
         borderRadius: 12,
         shadowColor: '#000',
@@ -1936,7 +1603,6 @@ const styles = StyleSheet.create({
     mapAddressText: {
         flex: 1,
         fontSize: 12,
-        color: '#0f172a',
         fontWeight: '500',
     },
     recenterButton: {
@@ -1946,7 +1612,6 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         borderRadius: 12,
-        backgroundColor: '#ffffff',
         borderWidth: 1.5,
         justifyContent: 'center',
         alignItems: 'center',
@@ -1967,7 +1632,6 @@ const styles = StyleSheet.create({
     searchInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#ffffff',
         borderRadius: 14,
         borderWidth: 1.5,
         paddingHorizontal: 14,
@@ -1977,7 +1641,6 @@ const styles = StyleSheet.create({
     searchAddressInput: {
         flex: 1,
         fontSize: 14,
-        color: '#1e293b',
         paddingVertical: 0,
     },
     searchingContainer: {
@@ -1989,13 +1652,10 @@ const styles = StyleSheet.create({
     },
     searchingText: {
         fontSize: 13,
-        color: '#64748b',
     },
     searchResultsContainer: {
-        backgroundColor: '#ffffff',
         borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#e2e8f0',
         overflow: 'hidden',
     },
     searchResultItem: {
@@ -2004,7 +1664,6 @@ const styles = StyleSheet.create({
         gap: 12,
         padding: 14,
         borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
     },
     searchResultIcon: {
         width: 36,
@@ -2020,29 +1679,25 @@ const styles = StyleSheet.create({
     searchResultTitle: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#0f172a',
         marginBottom: 2,
     },
     searchResultSubtitle: {
         fontSize: 12,
-        color: '#64748b',
         lineHeight: 16,
     },
 
-    // ---- Manual address input (was missing) ----
+    // ---- Manual address input ----
     manualInputWrapper: {
         gap: 10,
     },
     manualInputLabel: {
         fontSize: 13,
         fontWeight: '600',
-        color: '#475569',
         marginBottom: 2,
     },
     manualInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#ffffff',
         borderRadius: 14,
         borderWidth: 1.5,
         paddingHorizontal: 14,
@@ -2052,7 +1707,6 @@ const styles = StyleSheet.create({
     manualAddressInput: {
         flex: 1,
         fontSize: 14,
-        color: '#1e293b',
         paddingVertical: 0,
     },
     geocodeButton: {
@@ -2072,9 +1726,9 @@ const styles = StyleSheet.create({
         opacity: 0.5,
     },
     geocodeButtonText: {
-        color: '#ffffff',
         fontSize: 14,
         fontWeight: '600',
+        color: '#ffffff',
     },
 
     // ---- Preview map ----
@@ -2082,7 +1736,6 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         borderWidth: 1.5,
         overflow: 'hidden',
-        backgroundColor: '#ffffff',
     },
     previewMapHeader: {
         flexDirection: 'row',
@@ -2093,7 +1746,6 @@ const styles = StyleSheet.create({
     previewMapTitle: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#0f172a',
     },
     previewMap: {
         height: 160,
@@ -2105,12 +1757,10 @@ const styles = StyleSheet.create({
         gap: 8,
         padding: 12,
         borderTopWidth: 1,
-        borderTopColor: '#f1f5f9',
     },
     previewAddressText: {
         flex: 1,
         fontSize: 13,
-        color: '#475569',
         lineHeight: 18,
     },
 
@@ -2158,19 +1808,16 @@ const styles = StyleSheet.create({
     successTitle: {
         fontSize: 22,
         fontWeight: '800',
-        color: '#0f172a',
         textAlign: 'center',
         marginBottom: 8,
     },
     successSubtitle: {
         fontSize: 14,
-        color: '#64748b',
         textAlign: 'center',
         lineHeight: 20,
         marginBottom: 12,
     },
     requestIdContainer: {
-        backgroundColor: '#f8fafc',
         borderRadius: 12,
         padding: 12,
         alignItems: 'center',
@@ -2179,7 +1826,6 @@ const styles = StyleSheet.create({
     },
     requestIdLabel: {
         fontSize: 11,
-        color: '#94a3b8',
         fontWeight: '600',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -2188,7 +1834,6 @@ const styles = StyleSheet.create({
     requestIdValue: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#0f172a',
         fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     },
     successActions: {
@@ -2204,13 +1849,10 @@ const styles = StyleSheet.create({
         paddingVertical: 13,
         borderRadius: 14,
         borderWidth: 1.5,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#ffffff',
     },
     successHomeButtonText: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#64748b',
     },
     successTrackButton: {
         flex: 1.5,
@@ -2227,8 +1869,8 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
     successTrackButtonText: {
-        color: '#ffffff',
         fontSize: 14,
         fontWeight: '600',
+        color: '#ffffff',
     },
 });

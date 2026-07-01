@@ -16,27 +16,41 @@ import {
     RefreshControl,
 } from 'react-native';
 import { useRouter, useNavigation } from 'expo-router';
-import { MaterialIcons, Ionicons, Feather, FontAwesome5 } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, {
-    FadeInDown,
-    FadeInUp,
-    Layout,
-    SlideInRight,
-    SlideInLeft,
-    useSharedValue,
-    useAnimatedStyle,
-    withTiming,
-    withDelay,
-    Easing,
-    withSequence,
-    withRepeat,
-} from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useCartQuery, useUpdateCartItem, useRemoveFromCart, useClearCart } from '../../../hooks/cart';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
+
+// ============================================
+// BLUE THEME CONSTANTS
+// ============================================
+
+const THEME = {
+    primary: '#2563eb',
+    primaryLight: '#3b82f6',
+    primaryDark: '#1d4ed8',
+    primaryBg: 'rgba(37, 99, 235, 0.08)',
+    gradientStart: '#2563eb',
+    gradientEnd: '#1d4ed8',
+    text: '#000000',
+    textSecondary: '#333333',
+    textTertiary: '#666666',
+    textInverse: '#ffffff',
+    border: '#e2e8f0',
+    borderLight: '#f1f5f9',
+    white: '#ffffff',
+    background: '#f8fafc',
+    surface: '#ffffff',
+    success: '#22c55e',
+    successBg: 'rgba(34, 197, 94, 0.08)',
+    error: '#ef4444',
+    errorBg: 'rgba(239, 68, 68, 0.08)',
+    warning: '#f59e0b',
+    warningBg: 'rgba(245, 158, 11, 0.08)',
+};
 
 // ============================================
 // TYPES
@@ -62,8 +76,8 @@ interface CartItem {
 // ============================================
 // CONSTANTS
 // ============================================
-const THEME_COLOR = '#2563eb';
-const THEME_COLOR_LIGHT = '#3b82f6';
+
+const VAT_RATE = 0.13; // 13% VAT
 
 // ============================================
 // HELPER FUNCTIONS
@@ -85,86 +99,18 @@ const formatPrice = (price: number): string => {
 };
 
 // ============================================
-// ANIMATED PRICE COMPONENT
-// ============================================
-
-const AnimatedPrice = ({ 
-    fromPrice, 
-    toPrice, 
-    duration = 1500 
-}: { 
-    fromPrice: number; 
-    toPrice: number; 
-    duration?: number;
-}) => {
-    const progress = useSharedValue(0);
-    const [displayPrice, setDisplayPrice] = useState(fromPrice);
-    
-    useEffect(() => {
-        // Animate from fromPrice to toPrice
-        progress.value = withTiming(1, {
-            duration: duration,
-            easing: Easing.out(Easing.cubic),
-        });
-        
-        // Update display price based on progress
-        const interval = setInterval(() => {
-            const currentProgress = progress.value;
-            const currentPrice = Math.round(fromPrice - (fromPrice - toPrice) * currentProgress);
-            setDisplayPrice(currentPrice);
-            
-            if (currentProgress >= 1) {
-                clearInterval(interval);
-                setDisplayPrice(toPrice);
-            }
-        }, 50);
-        
-        return () => clearInterval(interval);
-    }, [fromPrice, toPrice, duration]);
-    
-    const textStyle = useAnimatedStyle(() => {
-        const scale = 1 + (1 - progress.value) * 0.3;
-        const opacity = 0.3 + progress.value * 0.7;
-        
-        return {
-            transform: [{ scale }],
-            opacity,
-        };
-    });
-    
-    const colorStyle = useAnimatedStyle(() => {
-        // Transition from gray to green
-        const r = Math.round(100 + (16 - 100) * progress.value);
-        const g = Math.round(116 + (185 - 116) * progress.value);
-        const b = Math.round(128 + (129 - 128) * progress.value);
-        
-        return {
-            color: `rgb(${r}, ${g}, ${b})`,
-        };
-    });
-    
-    return (
-        <Animated.Text style={[styles.animatedPrice, textStyle, colorStyle]}>
-            {displayPrice === 0 ? 'Free' : `रु ${displayPrice}`}
-        </Animated.Text>
-    );
-};
-
-// ============================================
 // MAIN COMPONENT
 // ============================================
 
 export default function CartScreen() {
     const router = useRouter();
     const navigation = useNavigation();
-    const animationStarted = useRef(false);
 
-    // Use React Query for cart data
-    const { 
-        data: cartData, 
-        isLoading, 
+    const {
+        data: cartData,
+        isLoading,
         refetch,
-        isRefetching 
+        isRefetching
     } = useCartQuery();
 
     const { mutateAsync: updateCartItem } = useUpdateCartItem();
@@ -173,6 +119,7 @@ export default function CartScreen() {
 
     const [cartItems, setCartItems] = useState<CartItem[]>([]);
     const [subtotal, setSubtotal] = useState(0);
+    const [vat, setVat] = useState(0);
     const [serviceCharge, setServiceCharge] = useState(150);
     const [serviceChargeDiscount, setServiceChargeDiscount] = useState(150);
     const [total, setTotal] = useState(0);
@@ -180,10 +127,7 @@ export default function CartScreen() {
     const [discount, setDiscount] = useState(0);
     const [isPromoApplied, setIsPromoApplied] = useState(false);
     const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
-    const [animateServiceCharge, setAnimateServiceCharge] = useState(false);
-    const [showAnimatedPrice, setShowAnimatedPrice] = useState(false);
 
-    // Update cart items when data changes
     useEffect(() => {
         if (cartData?.items) {
             setCartItems(cartData.items.map((item: CartItem) => ({
@@ -195,7 +139,7 @@ export default function CartScreen() {
         }
     }, [cartData]);
 
-    // Calculate totals whenever cart items or promo changes
+    // Calculate totals with VAT
     useEffect(() => {
         const subtotalAmount = cartItems.reduce(
             (sum, item) => sum + parseFloat(item.price || '0') * item.quantity,
@@ -203,32 +147,20 @@ export default function CartScreen() {
         );
         const discountAmount = isPromoApplied ? subtotalAmount * 0.1 : 0;
         const netServiceCharge = serviceCharge - serviceChargeDiscount;
-        const totalAmount = subtotalAmount + netServiceCharge - discountAmount;
+        const vatAmount = (subtotalAmount - discountAmount + netServiceCharge) * VAT_RATE;
+        const totalAmount = subtotalAmount + netServiceCharge + vatAmount - discountAmount;
 
         setSubtotal(subtotalAmount);
+        setVat(vatAmount);
         setDiscount(discountAmount);
         setTotal(totalAmount);
     }, [cartItems, isPromoApplied, serviceCharge, serviceChargeDiscount]);
 
-    // Trigger animation when cart has items
-    useEffect(() => {
-        if (cartItems.length > 0 && !animationStarted.current) {
-            animationStarted.current = true;
-            // Start animation after a short delay
-            setTimeout(() => {
-                setShowAnimatedPrice(true);
-                setAnimateServiceCharge(true);
-            }, 500);
-        }
-    }, [cartItems]);
-
-    // Memoize total item count
     const totalItemCount = useMemo(
         () => cartItems.reduce((sum, item) => sum + item.quantity, 0),
         [cartItems]
     );
 
-    // Handle clear cart
     const handleClearCart = useCallback(async () => {
         if (cartItems.length === 0) return;
 
@@ -246,9 +178,6 @@ export default function CartScreen() {
                         try {
                             await clearCart();
                             await refetch();
-                            animationStarted.current = false;
-                            setShowAnimatedPrice(false);
-                            setAnimateServiceCharge(false);
                         } catch (error) {
                             Alert.alert('Error', 'Failed to clear cart. Please try again.');
                         }
@@ -258,12 +187,11 @@ export default function CartScreen() {
         );
     }, [cartItems.length, clearCart, refetch]);
 
-    // Set navigation options with proper dependencies
     useEffect(() => {
         navigation.setOptions({
             title: '',
             headerShadowVisible: false,
-            headerStyle: { backgroundColor: '#ffffff' },
+            headerStyle: { backgroundColor: THEME.white },
             headerTransparent: true,
             headerLeft: () => (
                 <TouchableOpacity
@@ -272,7 +200,7 @@ export default function CartScreen() {
                     activeOpacity={0.7}
                 >
                     <View style={styles.backButtonInner}>
-                        <Ionicons name="arrow-back" size={22} color="#0f172a" />
+                        <Ionicons name="arrow-back" size={22} color={THEME.text} />
                     </View>
                 </TouchableOpacity>
             ),
@@ -283,7 +211,7 @@ export default function CartScreen() {
                         style={styles.headerRightButton}
                         activeOpacity={0.7}
                     >
-                        <Feather name="trash-2" size={20} color="#ef4444" />
+                        <Feather name="trash-2" size={20} color={THEME.error} />
                     </TouchableOpacity>
                 )
             ),
@@ -292,27 +220,21 @@ export default function CartScreen() {
 
     const handleUpdateQuantity = useCallback(async (itemId: string, newQuantity: number) => {
         if (updatingItemId === itemId) return;
-        
-        // Find the item index
+
         const itemIndex = cartItems.findIndex(item => item.id === itemId);
         if (itemIndex === -1) return;
 
-        // Don't allow negative quantities
         if (newQuantity < 0) return;
-        
-        // If quantity is 0, remove the item
+
         if (newQuantity === 0) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             try {
                 setUpdatingItemId(itemId);
-                // Optimistically remove from local state
                 const updatedItems = cartItems.filter(item => item.id !== itemId);
                 setCartItems(updatedItems);
-                
                 await removeFromCart(itemId);
                 await refetch();
             } catch (error) {
-                // Revert on error - refetch will restore correct state
                 await refetch();
                 Alert.alert('Error', 'Failed to remove item. Please try again.');
             } finally {
@@ -321,23 +243,20 @@ export default function CartScreen() {
             return;
         }
 
-        // Update quantity
         try {
             setUpdatingItemId(itemId);
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            
-            // Optimistically update local state
+
             const updatedItems = [...cartItems];
             updatedItems[itemIndex] = {
                 ...updatedItems[itemIndex],
                 quantity: newQuantity
             };
             setCartItems(updatedItems);
-            
+
             await updateCartItem({ itemId, quantity: newQuantity });
             await refetch();
         } catch (error) {
-            // Revert on error - refetch will restore correct state
             await refetch();
             Alert.alert('Error', 'Failed to update cart. Please try again.');
         } finally {
@@ -358,7 +277,6 @@ export default function CartScreen() {
                     onPress: async () => {
                         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                         try {
-                            // Optimistically remove from local state
                             setCartItems(prev => prev.filter(item => item.id !== itemId));
                             await removeFromCart(itemId);
                             await refetch();
@@ -407,26 +325,23 @@ export default function CartScreen() {
             params: {
                 items: JSON.stringify(checkoutItems),
                 subtotal: subtotal.toString(),
+                vat: vat.toString(),
                 serviceCharge: serviceCharge.toString(),
                 serviceChargeDiscount: serviceChargeDiscount.toString(),
                 discount: discount.toString(),
                 total: total.toString(),
             },
         });
-    }, [cartItems, subtotal, serviceCharge, serviceChargeDiscount, discount, total, router]);
+    }, [cartItems, subtotal, vat, serviceCharge, serviceChargeDiscount, discount, total, router]);
 
     const renderCartItem = useCallback((item: CartItem, index: number) => {
         const initials = getInitials(item.name);
         const isUpdating = updatingItemId === item.id;
         const itemPrice = parseFloat(item.price || '0');
+        const totalItemPrice = itemPrice * item.quantity;
 
         return (
-            <Animated.View
-                key={`${item.id}-${index}`}
-                entering={FadeInDown.delay(index * 80).springify().damping(15)}
-                layout={Layout.springify()}
-                style={styles.cartItemWrapper}
-            >
+            <View key={`${item.id}-${index}`} style={styles.cartItemWrapper}>
                 <View style={styles.cartItemCard}>
                     <View style={styles.itemImageContainer}>
                         {item.imageUrl ? (
@@ -444,37 +359,29 @@ export default function CartScreen() {
                             </LinearGradient>
                         )}
                         {item.isPopular && (
-                            <View style={[styles.popularBadge, { backgroundColor: THEME_COLOR }]}>
+                            <View style={[styles.popularBadge, { backgroundColor: THEME.primary }]}>
                                 <MaterialIcons name="star" size={10} color="#fff" />
-                            </View>
-                        )}
-                        {item.categoryName && (
-                            <View style={[styles.categoryBadge, { backgroundColor: THEME_COLOR + '20' }]}>
-                                <Text style={[styles.categoryBadgeText, { color: THEME_COLOR }]}>
-                                    {item.categoryName}
-                                </Text>
                             </View>
                         )}
                     </View>
 
                     <View style={styles.itemInfo}>
                         <View style={styles.itemHeader}>
-                            <Text style={styles.itemName} numberOfLines={1}>
+                            <Text style={[styles.itemName, { color: THEME.text }]} numberOfLines={1}>
                                 {item.name}
                             </Text>
-                            <Text style={[styles.itemPrice, { color: THEME_COLOR }]}>
-                                {formatPrice(itemPrice)}
+                            <Text style={[styles.itemPrice, { color: THEME.primary }]}>
+                                {formatPrice(totalItemPrice)}
                             </Text>
                         </View>
 
                         {item.description && (
-                            <Text style={styles.itemDescription} numberOfLines={1}>
+                            <Text style={[styles.itemDescription, { color: THEME.textSecondary }]} numberOfLines={1}>
                                 {item.description}
                             </Text>
                         )}
 
                         <View style={styles.itemActions}>
-                            {/* Quantity Controls */}
                             <View style={styles.quantityContainer}>
                                 <TouchableOpacity
                                     style={[styles.quantityButton, styles.quantityMinus]}
@@ -483,14 +390,14 @@ export default function CartScreen() {
                                     disabled={isUpdating}
                                 >
                                     {isUpdating ? (
-                                        <ActivityIndicator size="small" color="#64748b" />
+                                        <ActivityIndicator size="small" color={THEME.textTertiary} />
                                     ) : (
-                                        <Ionicons name="remove" size={16} color="#64748b" />
+                                        <Ionicons name="remove" size={16} color={THEME.textTertiary} />
                                     )}
                                 </TouchableOpacity>
-                                <Text style={styles.quantityText}>{item.quantity}</Text>
+                                <Text style={[styles.quantityText, { color: THEME.text }]}>{item.quantity}</Text>
                                 <TouchableOpacity
-                                    style={[styles.quantityButton, styles.quantityPlus, { backgroundColor: THEME_COLOR }]}
+                                    style={[styles.quantityButton, styles.quantityPlus, { backgroundColor: THEME.primary }]}
                                     onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)}
                                     activeOpacity={0.7}
                                     disabled={isUpdating}
@@ -509,30 +416,27 @@ export default function CartScreen() {
                                 activeOpacity={0.7}
                                 disabled={isUpdating}
                             >
-                                <Feather name="trash-2" size={16} color="#ef4444" />
+                                <Feather name="trash-2" size={16} color={THEME.error} />
                             </TouchableOpacity>
                         </View>
                     </View>
                 </View>
-            </Animated.View>
+            </View>
         );
     }, [handleUpdateQuantity, handleRemoveItem, updatingItemId]);
 
     const renderEmptyState = useCallback(() => (
-        <Animated.View
-            entering={FadeInUp.springify().damping(15)}
-            style={styles.emptyContainer}
-        >
+        <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrapper}>
                 <LinearGradient
-                    colors={[THEME_COLOR + '10', THEME_COLOR + '05']}
+                    colors={[THEME.primary + '10', THEME.primary + '05']}
                     style={styles.emptyIconGradient}
                 >
-                    <Ionicons name="cart-outline" size={72} color={THEME_COLOR} />
+                    <Ionicons name="cart-outline" size={72} color={THEME.primary} />
                 </LinearGradient>
             </View>
-            <Text style={styles.emptyTitle}>Your cart is empty</Text>
-            <Text style={styles.emptySubtitle}>
+            <Text style={[styles.emptyTitle, { color: THEME.text }]}>Your cart is empty</Text>
+            <Text style={[styles.emptySubtitle, { color: THEME.textSecondary }]}>
                 Browse our services and add your favorites
             </Text>
             <TouchableOpacity
@@ -541,158 +445,155 @@ export default function CartScreen() {
                 activeOpacity={0.8}
             >
                 <LinearGradient
-                    colors={[THEME_COLOR, THEME_COLOR_LIGHT]}
+                    colors={[THEME.gradientStart, THEME.gradientEnd]}
                     style={styles.browseGradient}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                 >
                     <Feather name="arrow-left" size={18} color="#fff" />
-                    <Text style={styles.browseButtonText}>Browse Services</Text>
+                    <Text style={[styles.browseButtonText, { color: THEME.textInverse }]}>Browse Services</Text>
                 </LinearGradient>
             </TouchableOpacity>
-        </Animated.View>
+        </View>
     ), [router]);
 
-    const renderPromoCode = useCallback(() => (
-        <Animated.View
-            entering={FadeInUp.delay(200).springify()}
-            style={styles.promoContainer}
-        >
-            <View style={styles.promoCard}>
-                <FontAwesome5 name="ticket" size={18} color={THEME_COLOR} />
-                <TextInput
-                    style={styles.promoInput}
-                    placeholder="Enter promo code"
-                    placeholderTextColor="#94a3b8"
-                    value={promoCode}
-                    onChangeText={setPromoCode}
-                    editable={!isPromoApplied}
-                    autoCapitalize="characters"
-                />
-                {isPromoApplied ? (
-                    <View style={[styles.promoAppliedBadge, { backgroundColor: THEME_COLOR + '15' }]}>
-                        <Ionicons name="checkmark-circle" size={16} color={THEME_COLOR} />
-                        <Text style={[styles.promoAppliedText, { color: THEME_COLOR }]}>Applied</Text>
+    const renderBill = useCallback(() => (
+        <View style={[styles.billContainer, { backgroundColor: THEME.white, borderColor: THEME.border }]}>
+            {/* Bill Header */}
+            <View style={styles.billHeader}>
+                <View style={styles.billLogoContainer}>
+                    <View style={[styles.billLogo, { backgroundColor: THEME.primary }]}>
+                        <Text style={styles.billLogoText}>S</Text>
                     </View>
-                ) : (
-                    <TouchableOpacity
-                        style={[styles.promoApplyButton, { backgroundColor: THEME_COLOR }]}
-                        onPress={applyPromoCode}
-                        activeOpacity={0.7}
-                    >
-                        <Text style={styles.promoApplyText}>Apply</Text>
-                    </TouchableOpacity>
-                )}
-            </View>
-        </Animated.View>
-    ), [promoCode, isPromoApplied, applyPromoCode]);
-
-    const renderSummary = useCallback(() => (
-        <Animated.View
-            entering={FadeInUp.delay(300).springify()}
-            style={styles.summaryContainer}
-        >
-            <View style={styles.summaryHeader}>
-                <Text style={styles.summaryTitle}>Order Summary</Text>
-                <View style={[styles.itemCountBadge, { backgroundColor: THEME_COLOR + '10' }]}>
-                    <Text style={[styles.itemCountText, { color: THEME_COLOR }]}>
+                    <View>
+                        <Text style={[styles.billTitle, { color: THEME.text }]}>ServeX</Text>
+                        <Text style={[styles.billSubtitle, { color: THEME.textTertiary }]}>Order Summary</Text>
+                    </View>
+                </View>
+                <View style={[styles.billBadge, { backgroundColor: THEME.successBg }]}>
+                    <Text style={[styles.billBadgeText, { color: THEME.success }]}>
                         {totalItemCount} items
                     </Text>
                 </View>
             </View>
 
-            <View style={styles.summaryDetails}>
-                <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>Subtotal</Text>
-                    <Text style={styles.summaryValue}>{formatPrice(subtotal)}</Text>
+            <View style={styles.billDividerLine} />
+
+            {/* Bill Items */}
+            <View style={styles.billItems}>
+                {cartItems.map((item, index) => {
+                    const itemPrice = parseFloat(item.price || '0');
+                    const totalItemPrice = itemPrice * item.quantity;
+                    return (
+                        <View key={item.id} style={[styles.billItem, index > 0 && styles.billItemBorder]}>
+                            <View style={styles.billItemHeader}>
+                                <Text style={[styles.billItemName, { color: THEME.text }]} numberOfLines={1}>
+                                    {item.name}
+                                </Text>
+                                <Text style={[styles.billItemPrice, { color: THEME.primary }]}>
+                                    {formatPrice(totalItemPrice)}
+                                </Text>
+                            </View>
+                            <View style={styles.billItemDetails}>
+                                <Text style={[styles.billItemQty, { color: THEME.textTertiary }]}>
+                                    Qty: {item.quantity}
+                                </Text>
+                                {item.categoryName && (
+                                    <Text style={[styles.billItemCategory, { color: THEME.textTertiary }]}>
+                                        {item.categoryName}
+                                    </Text>
+                                )}
+                            </View>
+                        </View>
+                    );
+                })}
+            </View>
+
+            <View style={styles.billDividerLine} />
+
+            {/* Bill Totals with VAT */}
+            <View style={styles.billTotals}>
+                <View style={styles.billTotalRow}>
+                    <Text style={[styles.billTotalLabel, { color: THEME.textSecondary }]}>Subtotal</Text>
+                    <Text style={[styles.billTotalValue, { color: THEME.text }]}>{formatPrice(subtotal)}</Text>
+                </View>
+                <View style={styles.billTotalRow}>
+                    <Text style={[styles.billTotalLabel, { color: THEME.textSecondary }]}>
+                        VAT ({Math.round(VAT_RATE * 100)}%)
+                    </Text>
+                    <Text style={[styles.billTotalValue, { color: THEME.text }]}>
+                        {formatPrice(vat)}
+                    </Text>
+                </View>
+                <View style={styles.billTotalRow}>
+                    <Text style={[styles.billTotalLabel, { color: THEME.textSecondary }]}>Service Fee</Text>
+                    <Text style={[styles.billTotalValue, { color: THEME.text }]}>
+                        {formatPrice(serviceCharge - serviceChargeDiscount)}
+                    </Text>
                 </View>
 
-                {/* Service Charge with Animation */}
-                <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>Service Charge</Text>
-                    {showAnimatedPrice ? (
-                        <AnimatedPrice fromPrice={150} toPrice={0} duration={2000} />
-                    ) : (
-                        <Text style={[styles.summaryValue, { color: '#64748b' }]}>
-                            {formatPrice(serviceCharge)}
-                        </Text>
-                    )}
-                </View>
                 {isPromoApplied && (
-                    <Animated.View entering={SlideInRight.springify()} style={styles.summaryRow}>
-                        <Text style={[styles.summaryLabel, { color: THEME_COLOR }]}>
-                            <Ionicons name="pricetag" size={14} color={THEME_COLOR} /> Discount
+                    <View style={styles.billTotalRow}>
+                        <Text style={[styles.billTotalLabel, { color: THEME.success }]}>
+                            <Ionicons name="pricetag" size={14} color={THEME.success} /> Discount
                         </Text>
-                        <Text style={[styles.summaryValue, { color: THEME_COLOR, fontWeight: '700' }]}>
+                        <Text style={[styles.billTotalValue, { color: THEME.success }]}>
                             -{formatPrice(discount)}
                         </Text>
-                    </Animated.View>
+                    </View>
                 )}
 
-                <View style={styles.divider} />
+                <View style={styles.billDivider} />
 
-                <Animated.View
-                    entering={SlideInLeft.springify()}
-                    style={[styles.summaryRow, styles.totalRow]}
-                >
-                    <View>
-                        <Text style={styles.totalLabel}>Total Amount</Text>
-                        <Text style={styles.totalSubLabel}>Including all charges</Text>
-                    </View>
-                    <Text style={[styles.totalValue, { color: THEME_COLOR }]}>
+                <View style={[styles.billTotalRow, styles.billGrandTotal]}>
+                    <Text style={[styles.billGrandTotalLabel, { color: THEME.text }]}>Total Amount</Text>
+                    <Text style={[styles.billGrandTotalValue, { color: THEME.primary }]}>
                         {formatPrice(total)}
                     </Text>
-                </Animated.View>
+                </View>
             </View>
 
-            <TouchableOpacity
-                style={styles.checkoutButton}
-                onPress={handleCheckout}
-                activeOpacity={0.9}
-                disabled={!!updatingItemId || isLoading}
-            >
-                <LinearGradient
-                    colors={[THEME_COLOR, THEME_COLOR_LIGHT]}
-                    style={styles.checkoutGradient}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                >
-                    <Text style={styles.checkoutButtonText}>Proceed to Checkout</Text>
-                    <Ionicons name="arrow-forward" size={18} color="#fff" />
-                </LinearGradient>
-            </TouchableOpacity>
+            <View style={styles.billDividerLine} />
 
-            <View style={styles.safetyInfo}>
-                <Ionicons name="shield-checkmark" size={16} color="#10b981" />
-                <Text style={styles.safetyText}>Secure checkout • 100% protected</Text>
+            {/* Bill Footer */}
+            <View style={styles.billFooter}>
+                <View style={styles.billPaymentInfo}>
+                    <Ionicons name="shield-checkmark" size={16} color={THEME.success} />
+                    <Text style={[styles.billPaymentText, { color: THEME.textTertiary }]}>
+                        Secure checkout • 100% protected
+                    </Text>
+                </View>
+                <Text style={[styles.billThankYou, { color: THEME.textTertiary }]}>
+                    Thank you for choosing ServeX
+                </Text>
             </View>
-        </Animated.View>
-    ), [totalItemCount, subtotal, serviceCharge, serviceChargeDiscount, showAnimatedPrice, isPromoApplied, discount, total, handleCheckout, updatingItemId, isLoading]);
+        </View>
+    ), [cartItems, subtotal, vat, serviceCharge, serviceChargeDiscount, isPromoApplied, discount, total, totalItemCount]);
 
     // Loading state
     if (isLoading) {
         return (
-            <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+            <SafeAreaView style={[styles.safeArea, { backgroundColor: THEME.background }]} edges={['bottom']}>
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color={THEME_COLOR} />
-                    <Text style={styles.loadingText}>Loading your cart...</Text>
+                    <ActivityIndicator size="large" color={THEME.primary} />
+                    <Text style={[styles.loadingText, { color: THEME.textSecondary }]}>Loading your cart...</Text>
                 </View>
             </SafeAreaView>
         );
     }
 
     return (
-        <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-            <View style={styles.container}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: THEME.background }]} edges={['bottom']}>
+            <View style={[styles.container, { backgroundColor: THEME.background }]}>
                 {cartItems.length > 0 ? (
                     <>
                         <View style={styles.headerContent}>
-                            <Text style={styles.headerTitle}>Your Cart</Text>
-                            <Text style={styles.headerSubtitle}>
+                            <Text style={[styles.headerTitle, { color: THEME.text }]}>Your Cart</Text>
+                            <Text style={[styles.headerSubtitle, { color: THEME.textSecondary }]}>
                                 {cartItems.length} {cartItems.length === 1 ? 'service' : 'services'} selected
                             </Text>
                             {isRefetching && (
-                                <ActivityIndicator size="small" color={THEME_COLOR} style={styles.refetchIndicator} />
+                                <ActivityIndicator size="small" color={THEME.primary} style={styles.refetchIndicator} />
                             )}
                         </View>
 
@@ -704,8 +605,8 @@ export default function CartScreen() {
                                 <RefreshControl
                                     refreshing={isRefetching}
                                     onRefresh={refetch}
-                                    colors={[THEME_COLOR]}
-                                    tintColor={THEME_COLOR}
+                                    colors={[THEME.primary]}
+                                    tintColor={THEME.primary}
                                 />
                             }
                         >
@@ -713,20 +614,48 @@ export default function CartScreen() {
                                 {cartItems.map((item, index) => renderCartItem(item, index))}
                             </View>
 
-                            {renderPromoCode()}
-                            {renderSummary()}
+                            {/* Promo Code */}
+                            <View style={styles.promoContainer}>
+                                <View style={[styles.promoCard, { backgroundColor: THEME.white, borderColor: THEME.border }]}>
+                                    <Ionicons name="ticket-outline" size={18} color={THEME.primary} />
+                                    <TextInput
+                                        style={[styles.promoInput, { color: THEME.text }]}
+                                        placeholder="Enter promo code"
+                                        placeholderTextColor={THEME.textTertiary}
+                                        value={promoCode}
+                                        onChangeText={setPromoCode}
+                                        editable={!isPromoApplied}
+                                        autoCapitalize="characters"
+                                    />
+                                    {isPromoApplied ? (
+                                        <View style={[styles.promoAppliedBadge, { backgroundColor: THEME.primaryBg }]}>
+                                            <Ionicons name="checkmark-circle" size={16} color={THEME.primary} />
+                                            <Text style={[styles.promoAppliedText, { color: THEME.primary }]}>Applied</Text>
+                                        </View>
+                                    ) : (
+                                        <TouchableOpacity
+                                            style={[styles.promoApplyButton, { backgroundColor: THEME.primary }]}
+                                            onPress={applyPromoCode}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Text style={[styles.promoApplyText, { color: THEME.textInverse }]}>Apply</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                            </View>
+
+                            {/* Bill/Receipt */}
+                            {renderBill()}
+
                             <View style={styles.bottomSpacer} />
                         </ScrollView>
 
                         {/* Floating Bottom Bar */}
-                        <Animated.View
-                            entering={FadeInUp.delay(200).springify()}
-                            style={styles.floatingBar}
-                        >
+                        <View style={[styles.floatingBar, { backgroundColor: THEME.white, borderTopColor: THEME.border }]}>
                             <View style={styles.floatingBarContent}>
                                 <View>
-                                    <Text style={styles.floatingTotalLabel}>Total</Text>
-                                    <Text style={styles.floatingTotal}>{formatPrice(total)}</Text>
+                                    <Text style={[styles.floatingTotalLabel, { color: THEME.textTertiary }]}>Total</Text>
+                                    <Text style={[styles.floatingTotal, { color: THEME.text }]}>{formatPrice(total)}</Text>
                                 </View>
                                 <TouchableOpacity
                                     style={styles.floatingCheckout}
@@ -735,17 +664,17 @@ export default function CartScreen() {
                                     disabled={!!updatingItemId}
                                 >
                                     <LinearGradient
-                                        colors={[THEME_COLOR, THEME_COLOR_LIGHT]}
+                                        colors={[THEME.gradientStart, THEME.gradientEnd]}
                                         style={styles.floatingCheckoutGradient}
                                         start={{ x: 0, y: 0 }}
                                         end={{ x: 1, y: 0 }}
                                     >
-                                        <Text style={styles.floatingCheckoutText}>Checkout</Text>
-                                        <Ionicons name="arrow-forward" size={18} color="#fff" />
+                                        <Text style={[styles.floatingCheckoutText, { color: THEME.textInverse }]}>Checkout</Text>
+                                        <Ionicons name="arrow-forward" size={18} color={THEME.textInverse} />
                                     </LinearGradient>
                                 </TouchableOpacity>
                             </View>
-                        </Animated.View>
+                        </View>
                     </>
                 ) : (
                     renderEmptyState()
@@ -762,39 +691,32 @@ export default function CartScreen() {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
     },
     loadingText: {
         marginTop: 12,
         fontSize: 14,
-        color: '#64748b',
     },
     headerContent: {
         paddingHorizontal: 20,
         paddingTop: Platform.OS === 'ios' ? 8 : 16,
         paddingBottom: 16,
-        backgroundColor: '#f8fafc',
         marginTop: 4,
     },
     headerTitle: {
         fontSize: 28,
         fontWeight: '700',
-        color: '#0f172a',
         letterSpacing: -0.5,
     },
     headerSubtitle: {
         fontSize: 14,
-        color: '#64748b',
         marginTop: 2,
     },
     refetchIndicator: {
@@ -890,18 +812,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
     },
-    categoryBadge: {
-        position: 'absolute',
-        bottom: 4,
-        left: 4,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 4,
-    },
-    categoryBadgeText: {
-        fontSize: 9,
-        fontWeight: '600',
-    },
     itemInfo: {
         flex: 1,
         justifyContent: 'space-between',
@@ -915,7 +825,6 @@ const styles = StyleSheet.create({
     itemName: {
         fontSize: 15,
         fontWeight: '600',
-        color: '#0f172a',
         flex: 1,
         marginRight: 8,
     },
@@ -925,7 +834,6 @@ const styles = StyleSheet.create({
     },
     itemDescription: {
         fontSize: 12,
-        color: '#94a3b8',
         lineHeight: 16,
     },
     itemActions: {
@@ -937,11 +845,11 @@ const styles = StyleSheet.create({
     quantityContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
         borderRadius: 10,
         borderWidth: 1,
         borderColor: '#e2e8f0',
         overflow: 'hidden',
+        backgroundColor: '#f8fafc',
     },
     quantityButton: {
         width: 30,
@@ -953,12 +861,11 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     quantityPlus: {
-        backgroundColor: THEME_COLOR,
+        backgroundColor: THEME.primary,
     },
     quantityText: {
         fontSize: 15,
         fontWeight: '600',
-        color: '#0f172a',
         minWidth: 26,
         textAlign: 'center',
     },
@@ -974,12 +881,10 @@ const styles = StyleSheet.create({
     promoCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#ffffff',
         borderRadius: 14,
         paddingHorizontal: 14,
         paddingVertical: 10,
         borderWidth: 1,
-        borderColor: 'rgba(241, 245, 249, 0.8)',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.04,
@@ -990,7 +895,6 @@ const styles = StyleSheet.create({
     promoInput: {
         flex: 1,
         fontSize: 14,
-        color: '#0f172a',
         paddingVertical: 4,
     },
     promoApplyButton: {
@@ -999,9 +903,9 @@ const styles = StyleSheet.create({
         borderRadius: 8,
     },
     promoApplyText: {
-        color: '#ffffff',
         fontSize: 13,
         fontWeight: '600',
+        color: '#ffffff',
     },
     promoAppliedBadge: {
         flexDirection: 'row',
@@ -1015,120 +919,151 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: '600',
     },
-    summaryContainer: {
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 20,
-        marginTop: 16,
+    billContainer: {
         marginHorizontal: 16,
+        marginTop: 16,
+        borderRadius: 16,
+        padding: 16,
         borderWidth: 1,
-        borderColor: 'rgba(241, 245, 249, 0.8)',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.04,
+        shadowOpacity: 0.06,
         shadowRadius: 12,
         elevation: 3,
     },
-    summaryHeader: {
+    billHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 16,
+        marginBottom: 12,
     },
-    summaryTitle: {
+    billLogoContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    billLogo: {
+        width: 36,
+        height: 36,
+        borderRadius: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    billLogoText: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#ffffff',
+    },
+    billTitle: {
         fontSize: 18,
         fontWeight: '700',
-        color: '#0f172a',
+        letterSpacing: 0.5,
     },
-    itemCountBadge: {
-        paddingHorizontal: 12,
+    billSubtitle: {
+        fontSize: 11,
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+    },
+    billBadge: {
+        paddingHorizontal: 10,
         paddingVertical: 4,
         borderRadius: 12,
     },
-    itemCountText: {
-        fontSize: 12,
+    billBadgeText: {
+        fontSize: 11,
         fontWeight: '600',
     },
-    summaryDetails: {
-        gap: 4,
+    billDividerLine: {
+        height: 1,
+        backgroundColor: THEME.border,
+        marginVertical: 12,
     },
-    summaryRow: {
+    billItems: {
+        gap: 8,
+    },
+    billItem: {
+        paddingVertical: 6,
+    },
+    billItemBorder: {
+        borderTopWidth: 1,
+        borderTopColor: THEME.borderLight,
+        paddingTop: 8,
+    },
+    billItemHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingVertical: 6,
     },
-    summaryLabel: {
+    billItemName: {
         fontSize: 14,
-        color: '#64748b',
+        fontWeight: '600',
+        flex: 1,
+        marginRight: 8,
     },
-    summaryValue: {
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#0f172a',
-    },
-    animatedPrice: {
+    billItemPrice: {
         fontSize: 14,
         fontWeight: '700',
-        minWidth: 60,
-        textAlign: 'right',
     },
-    divider: {
+    billItemDetails: {
+        flexDirection: 'row',
+        gap: 12,
+        marginTop: 2,
+    },
+    billItemQty: {
+        fontSize: 12,
+    },
+    billItemCategory: {
+        fontSize: 12,
+    },
+    billTotals: {
+        gap: 4,
+    },
+    billTotalRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 2,
+    },
+    billTotalLabel: {
+        fontSize: 13,
+    },
+    billTotalValue: {
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    billDivider: {
         height: 1,
-        backgroundColor: '#f1f5f9',
+        backgroundColor: THEME.border,
         marginVertical: 8,
     },
-    totalRow: {
-        paddingVertical: 8,
+    billGrandTotal: {
+        paddingVertical: 4,
+    },
+    billGrandTotalLabel: {
+        fontSize: 16,
+        fontWeight: '700',
+    },
+    billGrandTotalValue: {
+        fontSize: 18,
+        fontWeight: '800',
+    },
+    billFooter: {
+        alignItems: 'center',
+        gap: 6,
         marginTop: 4,
     },
-    totalLabel: {
-        fontSize: 17,
-        fontWeight: '700',
-        color: '#0f172a',
-    },
-    totalSubLabel: {
-        fontSize: 12,
-        color: '#94a3b8',
-        marginTop: 1,
-    },
-    totalValue: {
-        fontSize: 20,
-        fontWeight: '700',
-    },
-    checkoutButton: {
-        marginTop: 16,
-        borderRadius: 16,
-        overflow: 'hidden',
-        shadowColor: '#2563eb',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 12,
-        elevation: 5,
-    },
-    checkoutGradient: {
+    billPaymentInfo: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 16,
-        gap: 8,
-    },
-    checkoutButtonText: {
-        color: '#ffffff',
-        fontSize: 16,
-        fontWeight: '600',
-    },
-    safetyInfo: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
         gap: 6,
-        marginTop: 12,
     },
-    safetyText: {
+    billPaymentText: {
         fontSize: 12,
-        color: '#94a3b8',
         fontWeight: '500',
+    },
+    billThankYou: {
+        fontSize: 11,
+        fontStyle: 'italic',
     },
     bottomSpacer: {
         height: 20,
@@ -1138,7 +1073,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 40,
-        backgroundColor: '#f8fafc',
         marginTop: -40,
     },
     emptyIconWrapper: {
@@ -1161,13 +1095,11 @@ const styles = StyleSheet.create({
     emptyTitle: {
         fontSize: 24,
         fontWeight: '700',
-        color: '#0f172a',
         marginBottom: 8,
         letterSpacing: -0.5,
     },
     emptySubtitle: {
         fontSize: 15,
-        color: '#94a3b8',
         textAlign: 'center',
         lineHeight: 22,
         marginBottom: 32,
@@ -1190,18 +1122,16 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     browseButtonText: {
-        color: '#ffffff',
         fontSize: 16,
         fontWeight: '600',
+        color: '#ffffff',
     },
     floatingBar: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-        backgroundColor: '#ffffff',
         borderTopWidth: 1,
-        borderTopColor: 'rgba(241, 245, 249, 0.8)',
         paddingHorizontal: 20,
         paddingVertical: 12,
         paddingBottom: Platform.OS === 'ios' ? 28 : 16,
@@ -1218,13 +1148,11 @@ const styles = StyleSheet.create({
     },
     floatingTotalLabel: {
         fontSize: 12,
-        color: '#94a3b8',
         fontWeight: '500',
     },
     floatingTotal: {
         fontSize: 20,
         fontWeight: '700',
-        color: '#0f172a',
     },
     floatingCheckout: {
         borderRadius: 14,
@@ -1243,8 +1171,8 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     floatingCheckoutText: {
-        color: '#ffffff',
         fontSize: 15,
         fontWeight: '600',
+        color: '#ffffff',
     },
 });

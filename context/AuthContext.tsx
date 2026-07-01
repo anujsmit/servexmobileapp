@@ -160,184 +160,191 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const tokenExpiryRef = useRef<number | null>(null);
     const roleRef = useRef<'user' | 'mistri' | null>(null);
 
-    useEffect(() => {
-        let isMounted = true;
+    // ============================================
+    // RESTORE AUTH STATE - FIXED
+    // ============================================
+    const restoreAuthState = useCallback(async () => {
+        try {
+            console.log('🔐 Restoring auth state...');
 
-        const loadAuth = async () => {
-            try {
-                setIsLoading(true);
-                console.log('🔐 Loading auth state...');
+            // Get all stored values
+            const storedToken = await SecureStore.getItemAsync('token');
+            const storedRefreshToken = await SecureStore.getItemAsync('refreshToken');
+            const storedExpiry = await SecureStore.getItemAsync('tokenExpiry');
+            const storedUser = await SecureStore.getItemAsync('user');
+            const storedRole = await SecureStore.getItemAsync('userRole');
 
-                // ✅ Get all stored values
-                const storedToken = await SecureStore.getItemAsync('token');
-                const storedRefreshToken = await SecureStore.getItemAsync('refreshToken');
-                const storedExpiry = await SecureStore.getItemAsync('tokenExpiry');
-                const storedUser = await SecureStore.getItemAsync('user');
-                const storedRole = await SecureStore.getItemAsync('userRole');
+            console.log('🔐 Stored token exists:', !!storedToken);
+            console.log('🔐 Stored user exists:', !!storedUser);
+            console.log('🔐 Stored expiry:', storedExpiry);
 
-                console.log('🔐 Stored token exists:', !!storedToken);
-                console.log('🔐 Stored expiry:', storedExpiry);
+            // If no token and no user, we're done - no auth state to restore
+            if (!storedToken && !storedUser) {
+                console.log('🔐 No stored auth found');
+                setIsLoading(false);
+                return;
+            }
 
-                if (isMounted) {
-                    // ✅ Set token first
-                    if (storedToken) {
-                        setToken(storedToken);
-                        tokenRef.current = storedToken;
-                    }
+            // Set the token first
+            if (storedToken) {
+                setToken(storedToken);
+                tokenRef.current = storedToken;
+            }
 
-                    if (storedRefreshToken) {
-                        setRefreshToken(storedRefreshToken);
-                        refreshTokenRef.current = storedRefreshToken;
-                    }
+            if (storedRefreshToken) {
+                setRefreshToken(storedRefreshToken);
+                refreshTokenRef.current = storedRefreshToken;
+            }
 
-                    if (storedExpiry) {
-                        const expiryNum = Number(storedExpiry);
-                        setTokenExpiry(expiryNum);
-                        tokenExpiryRef.current = expiryNum;
-                    }
+            if (storedExpiry) {
+                const expiryNum = Number(storedExpiry);
+                setTokenExpiry(expiryNum);
+                tokenExpiryRef.current = expiryNum;
+            }
 
-                    if (storedRole) {
-                        const role = storedRole as 'user' | 'mistri';
+            if (storedRole) {
+                const role = storedRole as 'user' | 'mistri';
+                setUserRoleState(role);
+                roleRef.current = role;
+            }
+
+            if (storedUser) {
+                try {
+                    const parsedUser = JSON.parse(storedUser);
+                    setUser(parsedUser);
+                    if (!storedRole && parsedUser.role) {
+                        const role = parsedUser.role === 'mistri' ? 'mistri' : 'user';
                         setUserRoleState(role);
                         roleRef.current = role;
                     }
-
-                    if (storedUser) {
-                        try {
-                            const parsedUser = JSON.parse(storedUser);
-                            setUser(parsedUser);
-                            if (!storedRole && parsedUser.role) {
-                                const role = parsedUser.role === 'mistri' ? 'mistri' : 'user';
-                                setUserRoleState(role);
-                                roleRef.current = role;
-                            }
-                        } catch (e) {
-                            console.error('Failed to parse stored user:', e);
-                        }
-                    }
-
-                    // ✅ Check if token is valid
-                    if (storedToken && storedExpiry) {
-                        const isExpired = Date.now() >= Number(storedExpiry);
-                        console.log('🔐 Token expired:', isExpired);
-
-                        if (isExpired && storedRefreshToken) {
-                            console.log('🔐 Token expired, refreshing...');
-                            await refreshAccessToken();
-                        } else if (storedToken && !isExpired) {
-                            console.log('🔐 Token valid, validating user...');
-                            await validateUserExists(storedToken);
-                            scheduleTokenRefresh();
-                            if (!isExpoGo() && getProjectId()) {
-                                registerPushToken(storedToken);
-                            }
-                        }
-                    }
+                } catch (e) {
+                    console.error('Failed to parse stored user:', e);
                 }
-            } catch (error) {
-                if (__DEV__) console.error('Error loading auth state:', error);
-                // ✅ Don't logout on error - keep existing state if possible
-            } finally {
-                if (isMounted) setIsLoading(false);
             }
-        };
 
-        loadAuth();
+            // Check if token is valid and not expired
+            if (storedToken && storedExpiry) {
+                const isExpired = Date.now() >= Number(storedExpiry);
+                console.log('🔐 Token expired:', isExpired);
 
-        // ✅ Handle app state changes - only refresh token, don't logout
-        const handleAppStateChange = async (nextAppState: AppStateStatus) => {
-            if (nextAppState === 'active' && tokenRef.current) {
-                console.log('📱 App became active, checking token...');
-                if (tokenExpiryRef.current && Date.now() >= (tokenExpiryRef.current - 5 * 60 * 1000)) {
-                    console.log('📱 Token near expiry, refreshing...');
-                    await refreshAccessToken();
-                } else if (tokenRef.current) {
-                    // ✅ Validate user exists but don't logout on 401 (let refresh handle it)
-                    try {
-                        const role = roleRef.current || 'user';
-                        const path = getAuthPath(role);
-                        const response = await fetch(`${API_URL}${path}/profile`, {
-                            headers: { Authorization: `Bearer ${tokenRef.current}` },
-                        });
-
-                        if (response.status === 401) {
-                            console.log('📱 Token invalid on app resume, refreshing...');
-                            await refreshAccessToken();
-                        }
-                    } catch (error) {
-                        console.log('📱 Error validating user on app resume:', error);
+                if (isExpired && storedRefreshToken) {
+                    console.log('🔐 Token expired, refreshing...');
+                    const newToken = await refreshAccessToken();
+                    if (!newToken) {
+                        // If refresh fails, clear auth
+                        console.log('🔐 Refresh failed, clearing auth');
+                        await logout();
+                    }
+                } else if (storedToken && !isExpired) {
+                    console.log('🔐 Token valid, validating user...');
+                    await validateUserExists(storedToken);
+                    scheduleTokenRefresh();
+                    if (!isExpoGo() && getProjectId()) {
+                        registerPushToken(storedToken);
                     }
                 }
             }
-        };
 
-        appStateSubscription.current = AppState.addEventListener('change', handleAppStateChange);
+            setIsLoading(false);
+            console.log('🔐 Auth restore complete');
 
-        return () => {
-            isMounted = false;
-            if (appStateSubscription.current) {
-                appStateSubscription.current.remove();
-            }
-            if (tokenRefreshTimeout.current) {
-                clearTimeout(tokenRefreshTimeout.current);
-                tokenRefreshTimeout.current = null;
-            }
-        };
+        } catch (error) {
+            console.error('Error restoring auth state:', error);
+            // On error, clear auth state to be safe
+            await logout();
+            setIsLoading(false);
+        }
     }, []);
 
-    const scheduleTokenRefresh = useCallback(() => {
-        if (tokenRefreshTimeout.current) {
-            clearTimeout(tokenRefreshTimeout.current);
-            tokenRefreshTimeout.current = null;
+    // ============================================
+    // VALIDATE USER EXISTS
+    // ============================================
+// context/AuthContext.tsx
+
+// ============================================
+// VALIDATE USER EXISTS - FIXED
+// ============================================
+const validateUserExists = async (authToken: string) => {
+    if (!authToken) return;
+    const role = roleRef.current || 'user';
+    const path = getAuthPath(role);
+    const url = `${API_URL}${path}/profile`;
+
+    try {
+        console.log(`👤 Validating user at: ${url}`);
+        
+        const response = await fetch(url, {
+            headers: { 
+                Authorization: `Bearer ${authToken}`,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        console.log(`👤 Validation response status: ${response.status}`);
+
+        // ✅ Only logout on 404 (user deleted)
+        if (response.status === 404) {
+            console.log('👤 User not found, logging out...');
+            await logout();
+            return;
         }
-        if (!tokenExpiry) return;
 
-        const timeUntilRefresh = Math.max(0, tokenExpiry - Date.now() - 5 * 60 * 1000);
-
-        if (timeUntilRefresh > 0) {
-            tokenRefreshTimeout.current = setTimeout(() => {
-                refreshAccessToken();
-            }, timeUntilRefresh);
-        } else {
-            refreshAccessToken();
-        }
-    }, [tokenExpiry]);
-
-    const validateUserExists = async (authToken: string) => {
-        if (!authToken) return;
-        const role = roleRef.current || 'user';
-        const path = getAuthPath(role);
-
-        try {
-            const response = await fetch(`${API_URL}${path}/profile`, {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
-
-            // ✅ Only logout on 404 (user deleted)
-            if (response.status === 404) {
-                console.log('👤 User not found, logging out...');
+        // ✅ On 401/403, try to refresh the token
+        if (response.status === 401 || response.status === 403) {
+            console.log('👤 Token invalid, attempting refresh...');
+            const newToken = await refreshAccessToken();
+            if (!newToken) {
+                console.log('👤 Refresh failed, logging out...');
                 await logout();
                 return;
             }
-
-            // ✅ On 401, try refresh (don't logout immediately)
-            if (response.status === 401) {
-                console.log('👤 Token invalid, refreshing...');
-                await refreshAccessToken();
-                return;
-            }
-
-            if (response.ok) {
-                const data = await response.json();
+            // ✅ If refresh succeeded, retry validation with new token
+            const retryResponse = await fetch(url, {
+                headers: { 
+                    Authorization: `Bearer ${newToken}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+            if (retryResponse.ok) {
+                const data = await retryResponse.json();
                 const userData = data.user || data;
+                userData.role = role;
                 setUser(userData);
                 await SecureStore.setItemAsync('user', JSON.stringify(userData));
+                console.log('👤 User validated after refresh');
+                return;
+            } else {
+                console.log('👤 Validation failed after refresh, logging out');
+                await logout();
+                return;
             }
-        } catch (error) {
-            if (__DEV__) console.error('Failed to validate user exists', error);
         }
-    };
 
+        // ✅ On success, update user data
+        if (response.ok) {
+            const data = await response.json();
+            const userData = data.user || data;
+            userData.role = role;
+            setUser(userData);
+            await SecureStore.setItemAsync('user', JSON.stringify(userData));
+            console.log('👤 User validated successfully');
+            return;
+        }
+
+        // ✅ For other errors (500, etc.), don't logout - just log and continue
+        console.log(`👤 Validation returned non-critical status: ${response.status}`);
+        // Keep the existing user data
+
+    } catch (error) {
+        // ✅ Network errors or timeouts - don't logout
+        console.error('👤 Error validating user:', error);
+        // Keep the existing user data and don't logout
+    }
+};
+
+    // ============================================
+    // REGISTER PUSH TOKEN
+    // ============================================
     const registerPushToken = async (authToken: string) => {
         if (!authToken) return;
 
@@ -422,6 +429,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             if (__DEV__) console.error('Error registering push token:', error);
         }
     };
+
+    // ============================================
+    // SCHEDULE TOKEN REFRESH
+    // ============================================
+    const scheduleTokenRefresh = useCallback(() => {
+        if (tokenRefreshTimeout.current) {
+            clearTimeout(tokenRefreshTimeout.current);
+            tokenRefreshTimeout.current = null;
+        }
+        if (!tokenExpiry) return;
+
+        const timeUntilRefresh = Math.max(0, tokenExpiry - Date.now() - 5 * 60 * 1000);
+
+        if (timeUntilRefresh > 0) {
+            tokenRefreshTimeout.current = setTimeout(() => {
+                refreshAccessToken();
+            }, timeUntilRefresh);
+        } else {
+            refreshAccessToken();
+        }
+    }, [tokenExpiry]);
 
     // ============================================
     // REGISTER
@@ -1075,8 +1103,60 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         await SecureStore.deleteItemAsync('tokenExpiry');
         await SecureStore.deleteItemAsync('user');
         await SecureStore.deleteItemAsync('userRole');
+
+        // ✅ Ensure loading is false after logout
+        setIsLoading(false);
     };
 
+    // ============================================
+    // APP STATE HANDLER
+    // ============================================
+    useEffect(() => {
+        // Load auth on mount
+        restoreAuthState();
+
+        // Handle app state changes
+        const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+            if (nextAppState === 'active' && tokenRef.current) {
+                console.log('📱 App became active, checking token...');
+                if (tokenExpiryRef.current && Date.now() >= (tokenExpiryRef.current - 5 * 60 * 1000)) {
+                    console.log('📱 Token near expiry, refreshing...');
+                    await refreshAccessToken();
+                } else if (tokenRef.current) {
+                    try {
+                        const role = roleRef.current || 'user';
+                        const path = getAuthPath(role);
+                        const response = await fetch(`${API_URL}${path}/profile`, {
+                            headers: { Authorization: `Bearer ${tokenRef.current}` },
+                        });
+
+                        if (response.status === 401) {
+                            console.log('📱 Token invalid on app resume, refreshing...');
+                            await refreshAccessToken();
+                        }
+                    } catch (error) {
+                        console.log('📱 Error validating user on app resume:', error);
+                    }
+                }
+            }
+        };
+
+        appStateSubscription.current = AppState.addEventListener('change', handleAppStateChange);
+
+        return () => {
+            if (appStateSubscription.current) {
+                appStateSubscription.current.remove();
+            }
+            if (tokenRefreshTimeout.current) {
+                clearTimeout(tokenRefreshTimeout.current);
+                tokenRefreshTimeout.current = null;
+            }
+        };
+    }, []);
+
+    // ============================================
+    // SCHEDULE TOKEN REFRESH ON EXPIRY CHANGE
+    // ============================================
     useEffect(() => {
         scheduleTokenRefresh();
         return () => {

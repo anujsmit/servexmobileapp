@@ -24,6 +24,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
+import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../../../../context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
@@ -53,9 +54,8 @@ interface FormData {
     latitude: number | null;
     longitude: number | null;
     details: string;
-    preferredDate: string;
-    preferredTime: string;
     urgency: 'normal' | 'urgent' | 'emergency';
+    postalCode: string;
 }
 
 // Blue color scheme
@@ -68,6 +68,7 @@ const COLORS = {
     primaryBgGradient: ['#2563eb', '#1d4ed8'] as const,
     text: '#0f172a',
     textSecondary: '#64748b',
+    textTertiary: '#94a3b8',
     border: '#e2e8f0',
     white: '#ffffff',
     success: '#10b981',
@@ -87,6 +88,12 @@ export default function ConsultationScreen() {
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
     
+    // Pincode validation states
+    const [isValidatingPincode, setIsValidatingPincode] = useState(false);
+    const [pincodeError, setPincodeError] = useState<string | null>(null);
+    const [isPincodeValid, setIsPincodeValid] = useState(false);
+    const [hasValidatedPincode, setHasValidatedPincode] = useState(false);
+    
     const [mapRegion, setMapRegion] = useState({
         latitude: 27.7172,
         longitude: 85.3240,
@@ -97,6 +104,7 @@ export default function ConsultationScreen() {
         latitude: number;
         longitude: number;
         address: string;
+        postalCode?: string;
     } | null>(null);
     const [addressError, setAddressError] = useState<string>('');
 
@@ -109,9 +117,8 @@ export default function ConsultationScreen() {
         latitude: null,
         longitude: null,
         details: '',
-        preferredDate: '',
-        preferredTime: '',
         urgency: 'normal',
+        postalCode: '',
     });
 
     const [errors, setErrors] = useState<Partial<FormData>>({});
@@ -136,7 +143,6 @@ export default function ConsultationScreen() {
             if (data.success && data.hierarchy) {
                 setCategories(data.hierarchy);
                 
-                // Auto-select first category
                 if (data.hierarchy.length > 0) {
                     const firstCategory = data.hierarchy[0];
                     handleSelectCategory(firstCategory);
@@ -146,7 +152,6 @@ export default function ConsultationScreen() {
             }
         } catch (error) {
             console.error('Error fetching categories:', error);
-            // Use fallback categories
             setCategories(getFallbackCategories());
             if (getFallbackCategories().length > 0) {
                 handleSelectCategory(getFallbackCategories()[0]);
@@ -164,6 +169,60 @@ export default function ConsultationScreen() {
             { id: 4, name: 'Carpenter', description: 'Professional carpentry services', iconUrl: null, iconColor: '#2563eb', displayOrder: 4, totalItems: 3 },
             { id: 5, name: 'Cleaner', description: 'Professional cleaning services', iconUrl: null, iconColor: '#2563eb', displayOrder: 5, totalItems: 4 },
         ];
+    };
+
+    // Pincode validation function
+    const validatePincode = async (pincode: string): Promise<boolean> => {
+        try {
+            setIsValidatingPincode(true);
+            setPincodeError(null);
+            setHasValidatedPincode(false);
+
+            let currentToken = token;
+            if (!currentToken) {
+                currentToken = await SecureStore.getItemAsync('token');
+                if (!currentToken) {
+                    setPincodeError('Please login to continue');
+                    setIsPincodeValid(false);
+                    setHasValidatedPincode(true);
+                    return false;
+                }
+            }
+
+            const url = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/users/pincode/validate-for-order`;
+            console.log('📡 Validating pincode:', pincode);
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${currentToken}`,
+                },
+                body: JSON.stringify({ pincode }),
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                setIsPincodeValid(true);
+                setPincodeError(null);
+                setHasValidatedPincode(true);
+                return true;
+            } else {
+                setIsPincodeValid(false);
+                setPincodeError(data.message || 'Service not available at this pincode');
+                setHasValidatedPincode(true);
+                return false;
+            }
+        } catch (error) {
+            console.error('❌ Error validating pincode:', error);
+            setPincodeError('Network error. Please try again.');
+            setIsPincodeValid(false);
+            setHasValidatedPincode(true);
+            return false;
+        } finally {
+            setIsValidatingPincode(false);
+        }
     };
 
     const requestLocationPermission = async () => {
@@ -203,24 +262,32 @@ export default function ConsultationScreen() {
                 const formattedAddress = [
                     addr.name,
                     addr.street,
+                    addr.district,
                     addr.city,
                     addr.region,
-                    addr.country,
                 ].filter(Boolean).join(', ');
+                
+                const postalCode = addr.postalCode || '';
                 
                 setSelectedLocation({
                     latitude,
                     longitude,
-                    address: formattedAddress,
+                    address: formattedAddress || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+                    postalCode: postalCode,
                 });
 
                 setFormData(prev => ({
                     ...prev,
-                    location: formattedAddress,
+                    location: formattedAddress || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
                     latitude,
                     longitude,
+                    postalCode: postalCode,
                 }));
                 setAddressError('');
+
+                if (postalCode && postalCode.length === 5) {
+                    await validatePincode(postalCode);
+                }
             }
         } catch (error) {
             console.error('Error getting address:', error);
@@ -253,22 +320,26 @@ export default function ConsultationScreen() {
                 const formattedAddress = [
                     addr.name,
                     addr.street,
+                    addr.district,
                     addr.city,
                     addr.region,
-                    addr.country,
                 ].filter(Boolean).join(', ');
+                
+                const postalCode = addr.postalCode || '';
 
                 setFormData(prev => ({
                     ...prev,
-                    location: formattedAddress,
+                    location: formattedAddress || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
                     latitude,
                     longitude,
+                    postalCode: postalCode,
                 }));
 
                 setSelectedLocation({
                     latitude,
                     longitude,
-                    address: formattedAddress,
+                    address: formattedAddress || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+                    postalCode: postalCode,
                 });
 
                 setMapRegion({
@@ -280,6 +351,10 @@ export default function ConsultationScreen() {
 
                 setShowMap(false);
                 setAddressError('');
+
+                if (postalCode && postalCode.length === 5) {
+                    await validatePincode(postalCode);
+                }
             }
         } catch (error) {
             console.error('Error getting current location:', error);
@@ -299,12 +374,28 @@ export default function ConsultationScreen() {
         if (!formData.details.trim()) {
             newErrors.details = 'Please describe your requirements';
         }
+        if (!formData.postalCode.trim()) {
+            newErrors.postalCode = 'Please enter your postal code';
+        } else if (!/^\d{5}$/.test(formData.postalCode.trim())) {
+            newErrors.postalCode = 'Please enter a valid 5-digit postal code';
+        } else if (!isPincodeValid && hasValidatedPincode) {
+            newErrors.postalCode = 'Service not available at this pincode';
+        } else if (!hasValidatedPincode) {
+            newErrors.postalCode = 'Please wait while we validate your pincode';
+        }
 
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
     };
 
-    // Make authenticated request with token refresh
+    // Check if service is available at the current pincode
+    const isServiceAvailable = (): boolean => {
+        const postalCode = formData.postalCode.trim();
+        if (postalCode.length !== 5) return false;
+        if (!hasValidatedPincode) return false;
+        return isPincodeValid;
+    };
+
     const makeAuthenticatedRequest = async (url: string, options: RequestInit = {}) => {
         let currentToken = token;
         if (!currentToken) {
@@ -348,7 +439,6 @@ export default function ConsultationScreen() {
         return response;
     };
 
-    // Use the correct endpoint for consultations
     const handleSubmit = async () => {
         if (!validateForm()) {
             Alert.alert('Error', 'Please fill all required fields.');
@@ -357,6 +447,12 @@ export default function ConsultationScreen() {
 
         if (!token) {
             Alert.alert('Error', 'You must be logged in to submit a consultation request.');
+            return;
+        }
+
+        // Double-check pincode validation
+        if (!isPincodeValid && hasValidatedPincode) {
+            Alert.alert('Service Not Available', 'We do not provide services at this location. Please check your postal code.');
             return;
         }
 
@@ -374,9 +470,8 @@ export default function ConsultationScreen() {
                     latitude: formData.latitude,
                     longitude: formData.longitude,
                     details: formData.details,
-                    preferredDate: formData.preferredDate,
-                    preferredTime: formData.preferredTime,
                     urgency: formData.urgency,
+                    postalCode: formData.postalCode,
                 }),
             });
 
@@ -435,7 +530,6 @@ export default function ConsultationScreen() {
     };
 
     const getCategoryColor = (categoryName: string) => {
-        // All categories use blue theme
         return COLORS.primary;
     };
 
@@ -511,6 +605,21 @@ export default function ConsultationScreen() {
             </View>
         );
     }
+
+    // Determine if submit button should be disabled
+    const isSubmitDisabled = (): boolean => {
+        if (submitting) return true;
+        
+        const postalCode = formData.postalCode.trim();
+        if (postalCode.length !== 5) return true;
+        if (!hasValidatedPincode) return true;
+        if (!isPincodeValid) return true;
+        if (!formData.categoryId) return true;
+        if (!formData.location.trim()) return true;
+        if (!formData.details.trim()) return true;
+        
+        return false;
+    };
 
     return (
         <KeyboardAvoidingView
@@ -647,6 +756,83 @@ export default function ConsultationScreen() {
                             )}
                         </View>
 
+                        {/* Postal Code */}
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.inputLabel}>Postal Code *</Text>
+                            <View style={[
+                                styles.postalCodeWrapper,
+                                errors.postalCode && styles.inputError,
+                                isPincodeValid && styles.inputSuccess,
+                                {
+                                    borderColor: isPincodeValid ? COLORS.success : (errors.postalCode ? COLORS.error : COLORS.border)
+                                }
+                            ]}>
+                                <TextInput
+                                    style={styles.postalCodeInput}
+                                    placeholder="Enter 5-digit postal code"
+                                    placeholderTextColor={COLORS.textTertiary}
+                                    keyboardType="numeric"
+                                    maxLength={5}
+                                    value={formData.postalCode}
+                                    onChangeText={(text) => {
+                                        const cleaned = text.replace(/[^0-9]/g, '');
+                                        setFormData(prev => ({ ...prev, postalCode: cleaned }));
+                                        setIsPincodeValid(false);
+                                        setPincodeError(null);
+                                        setHasValidatedPincode(false);
+                                        if (errors.postalCode) {
+                                            setErrors(prev => ({ ...prev, postalCode: undefined }));
+                                        }
+                                        if (cleaned.length === 5) {
+                                            validatePincode(cleaned);
+                                        }
+                                    }}
+                                    onBlur={() => {
+                                        if (formData.postalCode.trim().length === 5 && !hasValidatedPincode) {
+                                            validatePincode(formData.postalCode.trim());
+                                        }
+                                    }}
+                                />
+                                <View style={styles.postalCodeRightIcon}>
+                                    {isValidatingPincode && (
+                                        <ActivityIndicator size="small" color={COLORS.primary} />
+                                    )}
+                                    {isPincodeValid && !isValidatingPincode && (
+                                        <Ionicons name="checkmark-circle" size={20} color={COLORS.success} />
+                                    )}
+                                    {!isPincodeValid && formData.postalCode.trim().length === 5 && !isValidatingPincode && hasValidatedPincode && (
+                                        <Ionicons name="alert-circle" size={20} color={COLORS.error} />
+                                    )}
+                                </View>
+                            </View>
+                            {errors.postalCode && (
+                                <Text style={styles.errorText}>{errors.postalCode}</Text>
+                            )}
+                            {pincodeError && !errors.postalCode && (
+                                <Text style={styles.errorText}>{pincodeError}</Text>
+                            )}
+                            {isPincodeValid && (
+                                <View style={styles.successBadge}>
+                                    <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+                                    <Text style={[styles.successText, { color: COLORS.success }]}>✓ Service available at this location</Text>
+                                </View>
+                            )}
+                            {!isPincodeValid && formData.postalCode.trim().length === 5 && !isValidatingPincode && !hasValidatedPincode && (
+                                <View style={styles.successBadge}>
+                                    <ActivityIndicator size="small" color={COLORS.primary} />
+                                    <Text style={[styles.successText, { color: COLORS.textTertiary }]}>Validating postal code...</Text>
+                                </View>
+                            )}
+                            {!isPincodeValid && formData.postalCode.trim().length === 5 && hasValidatedPincode && (
+                                <View style={styles.serviceUnavailableWarning}>
+                                    <Ionicons name="warning-outline" size={16} color={COLORS.error} />
+                                    <Text style={[styles.warningText, { color: COLORS.error }]}>
+                                        Service not available at this location
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+
                         {/* Details */}
                         <View style={styles.inputGroup}>
                             <Text style={styles.inputLabel}>Project Details *</Text>
@@ -672,40 +858,7 @@ export default function ConsultationScreen() {
                             )}
                         </View>
 
-                        {/* Preferred Date & Time */}
-                        <View style={styles.row}>
-                            <View style={[styles.inputGroup, styles.halfWidth]}>
-                                <Text style={styles.inputLabel}>Preferred Date</Text>
-                                <TouchableOpacity
-                                    style={styles.dateButton}
-                                    onPress={() => {
-                                        // Show date picker
-                                    }}
-                                >
-                                    <MaterialIcons name="event" size={20} color={COLORS.textSecondary} />
-                                    <Text style={styles.dateButtonText}>
-                                        {formData.preferredDate || 'Select date'}
-                                    </Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <View style={[styles.inputGroup, styles.halfWidth]}>
-                                <Text style={styles.inputLabel}>Preferred Time</Text>
-                                <TouchableOpacity
-                                    style={styles.dateButton}
-                                    onPress={() => {
-                                        // Show time picker
-                                    }}
-                                >
-                                    <MaterialIcons name="access-time" size={20} color={COLORS.textSecondary} />
-                                    <Text style={styles.dateButtonText}>
-                                        {formData.preferredTime || 'Select time'}
-                                    </Text>
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-
-                        {/* Urgency */}
+                        {/* Urgency - Full blue when selected */}
                         <View style={styles.inputGroup}>
                             <Text style={styles.inputLabel}>Urgency Level</Text>
                             <View style={styles.urgencyContainer}>
@@ -725,7 +878,7 @@ export default function ConsultationScreen() {
                                         <Ionicons
                                             name={option.icon as any}
                                             size={20}
-                                            color={formData.urgency === option.value ? COLORS.primary : COLORS.textSecondary}
+                                            color={formData.urgency === option.value ? COLORS.white : COLORS.textSecondary}
                                         />
                                         <Text style={[
                                             styles.urgencyOptionText,
@@ -738,18 +891,24 @@ export default function ConsultationScreen() {
                             </View>
                         </View>
 
-                        {/* Submit Button - Blue */}
+                        {/* Submit Button - Disabled when service not available */}
                         <TouchableOpacity
-                            style={styles.submitButton}
+                            style={[
+                                styles.submitButton,
+                                isSubmitDisabled() && styles.submitButtonDisabled
+                            ]}
                             onPress={handleSubmit}
-                            disabled={submitting}
+                            disabled={isSubmitDisabled()}
                             activeOpacity={0.8}
                         >
                             <LinearGradient
                                 colors={COLORS.primaryBgGradient}
+                                style={[
+                                    styles.submitGradient,
+                                    isSubmitDisabled() && styles.submitGradientDisabled
+                                ]}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
-                                style={styles.submitGradient}
                             >
                                 {submitting ? (
                                     <ActivityIndicator size="small" color="#fff" />
@@ -761,6 +920,34 @@ export default function ConsultationScreen() {
                                 )}
                             </LinearGradient>
                         </TouchableOpacity>
+
+                        {/* Disabled message */}
+                        {isSubmitDisabled() && formData.postalCode.trim().length === 5 && hasValidatedPincode && !isPincodeValid && (
+                            <View style={styles.disabledMessageContainer}>
+                                <Ionicons name="information-circle" size={20} color={COLORS.error} />
+                                <Text style={styles.disabledMessageText}>
+                                    Service not available at this location. Please check your postal code.
+                                </Text>
+                            </View>
+                        )}
+
+                        {isSubmitDisabled() && formData.postalCode.trim().length !== 5 && (
+                            <View style={styles.disabledMessageContainer}>
+                                <Ionicons name="information-circle" size={20} color={COLORS.textSecondary} />
+                                <Text style={styles.disabledMessageText}>
+                                    Please enter a valid 5-digit postal code to continue.
+                                </Text>
+                            </View>
+                        )}
+
+                        {isSubmitDisabled() && formData.postalCode.trim().length === 5 && !hasValidatedPincode && (
+                            <View style={styles.disabledMessageContainer}>
+                                <ActivityIndicator size="small" color={COLORS.primary} />
+                                <Text style={styles.disabledMessageText}>
+                                    Validating your postal code...
+                                </Text>
+                            </View>
+                        )}
 
                         {/* Contact Info */}
                         <View style={styles.contactContainer}>
@@ -838,6 +1025,14 @@ export default function ConsultationScreen() {
                                     {selectedLocation.address}
                                 </Text>
                             </View>
+                            {selectedLocation.postalCode && (
+                                <View style={styles.mapPostalContainer}>
+                                    <MaterialIcons name="pin-drop" size={16} color={COLORS.textSecondary} />
+                                    <Text style={styles.mapPostalText}>
+                                        Postal Code: {selectedLocation.postalCode}
+                                    </Text>
+                                </View>
+                            )}
                             <TouchableOpacity
                                 style={styles.mapConfirmButton}
                                 onPress={() => {
@@ -846,9 +1041,13 @@ export default function ConsultationScreen() {
                                         location: selectedLocation.address,
                                         latitude: selectedLocation.latitude,
                                         longitude: selectedLocation.longitude,
+                                        postalCode: selectedLocation.postalCode || '',
                                     }));
                                     setShowMap(false);
                                     setAddressError('');
+                                    if (selectedLocation.postalCode && selectedLocation.postalCode.length === 5) {
+                                        validatePincode(selectedLocation.postalCode);
+                                    }
                                 }}
                             >
                                 <LinearGradient
@@ -995,11 +1194,36 @@ const styles = StyleSheet.create({
     inputError: {
         borderColor: COLORS.error,
     },
+    inputSuccess: {
+        borderColor: COLORS.success,
+    },
     errorText: {
         fontSize: 12,
         color: COLORS.error,
         marginTop: 4,
         marginLeft: 4,
+    },
+    successText: {
+        fontSize: 12,
+        fontWeight: '500',
+        marginLeft: 4,
+    },
+    successBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
+        gap: 2,
+    },
+    warningText: {
+        fontSize: 12,
+        fontWeight: '500',
+        marginLeft: 4,
+    },
+    serviceUnavailableWarning: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
+        gap: 2,
     },
 
     // Category Selector
@@ -1111,6 +1335,37 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
 
+    // Postal Code
+    postalCodeWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: COLORS.white,
+        borderRadius: 12,
+        borderWidth: 1,
+        paddingHorizontal: 16,
+        paddingVertical: 4,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#0f172a',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.04,
+                shadowRadius: 4,
+            },
+            android: {
+                elevation: 2,
+            },
+        }),
+    },
+    postalCodeInput: {
+        flex: 1,
+        fontSize: 15,
+        color: COLORS.text,
+        paddingVertical: 12,
+    },
+    postalCodeRightIcon: {
+        marginLeft: 8,
+    },
+
     // Details
     detailsWrapper: {
         backgroundColor: COLORS.white,
@@ -1138,43 +1393,7 @@ const styles = StyleSheet.create({
         paddingTop: 8,
     },
 
-    // Date & Time
-    row: {
-        flexDirection: 'row',
-        gap: 12,
-    },
-    halfWidth: {
-        flex: 1,
-    },
-    dateButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: COLORS.white,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        paddingHorizontal: 14,
-        paddingVertical: 14,
-        gap: 10,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#0f172a',
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.04,
-                shadowRadius: 4,
-            },
-            android: {
-                elevation: 2,
-            },
-        }),
-    },
-    dateButtonText: {
-        flex: 1,
-        fontSize: 15,
-        color: COLORS.text,
-    },
-
-    // Urgency
+    // Urgency - Full blue when selected
     urgencyContainer: {
         flexDirection: 'row',
         gap: 10,
@@ -1204,8 +1423,8 @@ const styles = StyleSheet.create({
         }),
     },
     urgencyOptionSelected: {
+        backgroundColor: COLORS.primary,
         borderColor: COLORS.primary,
-        backgroundColor: COLORS.primaryBg,
     },
     urgencyOptionText: {
         fontSize: 13,
@@ -1213,14 +1432,14 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
     urgencyOptionTextSelected: {
-        color: COLORS.primary,
+        color: COLORS.white,
     },
 
     // Submit
     submitButton: {
         borderRadius: 14,
         overflow: 'hidden',
-        marginBottom: 20,
+        marginBottom: 8,
         marginTop: 8,
         ...Platform.select({
             ios: {
@@ -1234,6 +1453,17 @@ const styles = StyleSheet.create({
             },
         }),
     },
+    submitButtonDisabled: {
+        opacity: 0.6,
+        ...Platform.select({
+            ios: {
+                shadowOpacity: 0.1,
+            },
+            android: {
+                elevation: 2,
+            },
+        }),
+    },
     submitGradient: {
         paddingVertical: 16,
         paddingHorizontal: 24,
@@ -1242,11 +1472,33 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         gap: 10,
     },
+    submitGradientDisabled: {
+        opacity: 0.7,
+    },
     submitText: {
         fontSize: 16,
         fontWeight: '700',
         color: '#fff',
         letterSpacing: 0.3,
+    },
+
+    // Disabled Message
+    disabledMessageContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        backgroundColor: COLORS.primaryBg,
+        borderRadius: 8,
+        marginBottom: 12,
+    },
+    disabledMessageText: {
+        fontSize: 13,
+        color: COLORS.textSecondary,
+        textAlign: 'center',
+        flex: 1,
     },
 
     // Contact
@@ -1329,7 +1581,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginBottom: 12,
+        marginBottom: 8,
         paddingHorizontal: 4,
     },
     mapAddress: {
@@ -1337,6 +1589,18 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: COLORS.text,
         lineHeight: 20,
+    },
+    mapPostalContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 12,
+        paddingHorizontal: 4,
+    },
+    mapPostalText: {
+        fontSize: 13,
+        color: COLORS.textSecondary,
+        fontWeight: '500',
     },
     mapConfirmButton: {
         borderRadius: 12,

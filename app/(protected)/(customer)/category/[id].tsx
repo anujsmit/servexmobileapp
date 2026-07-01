@@ -21,6 +21,33 @@ const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 44) / 2;
 
 // ============================================
+// BLUE THEME CONSTANTS
+// ============================================
+
+const BLUE = {
+    primary: '#2563eb',
+    primaryLight: '#3b82f6',
+    primaryDark: '#1d4ed8',
+    primaryBg: 'rgba(37, 99, 235, 0.08)',
+    primaryBgLight: 'rgba(37, 99, 235, 0.12)',
+    primaryBgMedium: 'rgba(37, 99, 235, 0.15)',
+    gradientStart: '#2563eb',
+    gradientEnd: '#1d4ed8',
+    text: '#000000',
+    textSecondary: '#333333',
+    textTertiary: '#666666',
+    textInverse: '#ffffff',
+    border: '#e2e8f0',
+    borderLight: '#f1f5f9',
+    white: '#ffffff',
+    black: '#000000',
+    background: '#f8fafc',
+    surface: '#ffffff',
+    success: '#22c55e',
+    successBg: 'rgba(34, 197, 94, 0.08)',
+};
+
+// ============================================
 // TYPES
 // ============================================
 
@@ -50,11 +77,9 @@ interface CategoryInfo {
 
 const SubCategoryCard = memo(({ 
     subCategory, 
-    color, 
     onPress 
 }: { 
     subCategory: SubCategory; 
-    color: string; 
     onPress: () => void;
 }) => {
     const hasItems = subCategory.itemCount > 0;
@@ -78,8 +103,8 @@ const SubCategoryCard = memo(({
                         resizeMode="cover"
                     />
                 ) : (
-                    <View style={[styles.imagePlaceholder, { backgroundColor: color + '12' }]}>
-                        <Text style={[styles.imagePlaceholderText, { color: color + '40' }]}>
+                    <View style={[styles.imagePlaceholder, { backgroundColor: BLUE.primaryBg }]}>
+                        <Text style={[styles.imagePlaceholderText, { color: BLUE.primary + '40' }]}>
                             {firstLetter}
                         </Text>
                     </View>
@@ -91,40 +116,40 @@ const SubCategoryCard = memo(({
                 />
                 
                 {subCategory.isPopular && (
-                    <View style={[styles.popularBadge, { backgroundColor: color }]}>
+                    <View style={[styles.popularBadge, { backgroundColor: BLUE.primary }]}>
                         <Ionicons name="star" size={10} color="#fff" />
                     </View>
                 )}
                 
                 {!hasItems && (
                     <View style={styles.comingSoonOverlay}>
-                        <Text style={styles.comingSoonText}>Coming Soon</Text>
+                        <Text style={[styles.comingSoonText, { color: BLUE.textSecondary }]}>Coming Soon</Text>
                     </View>
                 )}
             </View>
 
             <View style={styles.cardContent}>
-                <Text style={styles.subCategoryName} numberOfLines={1}>
+                <Text style={[styles.subCategoryName, { color: BLUE.text }]} numberOfLines={1}>
                     {subCategory.name}
                 </Text>
                 
                 {subCategory.description && (
-                    <Text style={styles.subCategoryDescription} numberOfLines={2}>
+                    <Text style={[styles.subCategoryDescription, { color: BLUE.textSecondary }]} numberOfLines={2}>
                         {subCategory.description}
                     </Text>
                 )}
                 
                 <View style={styles.cardFooter}>
                     <View style={styles.serviceCountBadge}>
-                        <MaterialIcons name="handyman" size={12} color={hasItems ? color : '#cbd5e1'} />
-                        <Text style={[styles.serviceCountText, { color: hasItems ? '#64748b' : '#cbd5e1' }]}>
+                        <MaterialIcons name="handyman" size={12} color={hasItems ? BLUE.primary : BLUE.textTertiary} />
+                        <Text style={[styles.serviceCountText, { color: hasItems ? BLUE.textSecondary : BLUE.textTertiary }]}>
                             {subCategory.itemCount}
                         </Text>
                     </View>
                     
                     {hasItems && (
-                        <View style={[styles.arrowButton, { backgroundColor: color + '12' }]}>
-                            <Ionicons name="arrow-forward" size={14} color={color} />
+                        <View style={[styles.arrowButton, { backgroundColor: BLUE.primaryBg }]}>
+                            <Ionicons name="arrow-forward" size={14} color={BLUE.primary} />
                         </View>
                     )}
                 </View>
@@ -136,7 +161,7 @@ const SubCategoryCard = memo(({
 SubCategoryCard.displayName = 'SubCategoryCard';
 
 // ============================================
-// CONSULTATION BUTTON COMPONENT
+// CONSULTATION BUTTON COMPONENT - BLUE THEME
 // ============================================
 
 const ConsultationButton = memo(({ onPress }: { onPress: () => void }) => {
@@ -147,7 +172,7 @@ const ConsultationButton = memo(({ onPress }: { onPress: () => void }) => {
             onPress={onPress}
         >
             <LinearGradient
-                colors={['#f97316', '#e67e22']}
+                colors={[BLUE.gradientStart, BLUE.gradientEnd]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.consultationGradient}
@@ -188,9 +213,9 @@ export default function CategoryServicesScreen() {
     useEffect(() => {
         navigation.setOptions({
             title: (name as string) || 'Services',
-            headerTitleStyle: { fontWeight: '600', fontSize: 18 },
+            headerTitleStyle: { fontWeight: '600', fontSize: 18, color: BLUE.text },
             headerShadowVisible: false,
-            headerStyle: { backgroundColor: '#ffffff' },
+            headerStyle: { backgroundColor: BLUE.white },
         });
     }, [name, navigation]);
 
@@ -237,7 +262,7 @@ export default function CategoryServicesScreen() {
                 id: subCategory.id,
                 name: subCategory.name,
                 categoryName: categoryInfo?.name,
-                categoryColor: categoryInfo?.iconColor,
+                categoryColor: categoryInfo?.iconColor || BLUE.primary,
                 categoryId: categoryInfo?.id?.toString(),
             },
         });
@@ -247,7 +272,7 @@ export default function CategoryServicesScreen() {
         router.push('/book/consultation');
     };
 
-    const getCategoryColor = () => categoryInfo?.iconColor || '#e67e22';
+    const getCategoryColor = () => categoryInfo?.iconColor || BLUE.primary;
 
     const renderCategoryHeader = () => {
         const color = getCategoryColor();
@@ -255,11 +280,11 @@ export default function CategoryServicesScreen() {
         const totalServices = subCategories.reduce((acc, sub) => acc + sub.itemCount, 0);
         
         return (
-            <View style={styles.headerContainer}>
-                <View style={[styles.headerAccent, { backgroundColor: color + '08' }]} />
+            <View style={[styles.headerContainer, { backgroundColor: BLUE.white }]}>
+                <View style={[styles.headerAccent, { backgroundColor: BLUE.primaryBg }]} />
                 
                 <View style={styles.headerContent}>
-                    <View style={[styles.categoryIconWrapper, { borderColor: color + '25' }]}>
+                    <View style={[styles.categoryIconWrapper, { borderColor: BLUE.primary + '25', backgroundColor: BLUE.white }]}>
                         {categoryInfo?.iconUrl ? (
                             <Image 
                                 source={{ uri: categoryInfo.iconUrl }} 
@@ -267,7 +292,7 @@ export default function CategoryServicesScreen() {
                                 resizeMode="contain"
                             />
                         ) : (
-                            <View style={[styles.categoryIconFallback, { backgroundColor: color + '12' }]}>
+                            <View style={[styles.categoryIconFallback, { backgroundColor: BLUE.primaryBg }]}>
                                 <Text style={[styles.categoryIconText, { color }]}>
                                     {firstLetter}
                                 </Text>
@@ -275,27 +300,27 @@ export default function CategoryServicesScreen() {
                         )}
                     </View>
                     
-                    <Text style={styles.categoryName}>{categoryInfo?.name || name}</Text>
+                    <Text style={[styles.categoryName, { color: BLUE.text }]}>{categoryInfo?.name || name}</Text>
                     
                     {categoryInfo?.description && (
-                        <Text style={styles.categoryDescription}>{categoryInfo.description}</Text>
+                        <Text style={[styles.categoryDescription, { color: BLUE.textSecondary }]}>{categoryInfo.description}</Text>
                     )}
                     
                     <View style={styles.statsContainer}>
-                        <View style={[styles.statItem, { backgroundColor: color + '08' }]}>
-                            <MaterialIcons name="category" size={14} color={color} />
-                            <Text style={[styles.statText, { color }]}>
+                        <View style={[styles.statItem, { backgroundColor: BLUE.primaryBg }]}>
+                            <MaterialIcons name="category" size={14} color={BLUE.primary} />
+                            <Text style={[styles.statText, { color: BLUE.primary }]}>
                                 {subCategories.length}
                             </Text>
-                            <Text style={styles.statLabel}>Categories</Text>
+                            <Text style={[styles.statLabel, { color: BLUE.textSecondary }]}>Categories</Text>
                         </View>
                         
-                        <View style={[styles.statItem, { backgroundColor: color + '08' }]}>
-                            <MaterialIcons name="handyman" size={14} color={color} />
-                            <Text style={[styles.statText, { color }]}>
+                        <View style={[styles.statItem, { backgroundColor: BLUE.primaryBg }]}>
+                            <MaterialIcons name="handyman" size={14} color={BLUE.primary} />
+                            <Text style={[styles.statText, { color: BLUE.primary }]}>
                                 {totalServices}
                             </Text>
-                            <Text style={styles.statLabel}>Services</Text>
+                            <Text style={[styles.statLabel, { color: BLUE.textSecondary }]}>Services</Text>
                         </View>
                     </View>
                 </View>
@@ -309,15 +334,12 @@ export default function CategoryServicesScreen() {
             pairs.push(subCategories.slice(i, i + 2));
         }
 
-        const color = getCategoryColor();
-
         return pairs.map((pair, index) => (
             <View key={`row-${index}`} style={styles.gridRow}>
                 {pair.map((subCategory) => (
                     <SubCategoryCard
                         key={subCategory.id}
                         subCategory={subCategory}
-                        color={color}
                         onPress={() => handleSubCategoryPress(subCategory)}
                     />
                 ))}
@@ -330,9 +352,9 @@ export default function CategoryServicesScreen() {
 
     if (loading && !refreshing) {
         return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#e67e22" />
-                <Text style={styles.loadingText}>Loading categories...</Text>
+            <View style={[styles.loadingContainer, { backgroundColor: BLUE.background }]}>
+                <ActivityIndicator size="large" color={BLUE.primary} />
+                <Text style={[styles.loadingText, { color: BLUE.textSecondary }]}>Loading categories...</Text>
             </View>
         );
     }
@@ -341,11 +363,11 @@ export default function CategoryServicesScreen() {
 
     return (
         <ScrollView
-            style={styles.container}
+            style={[styles.container, { backgroundColor: BLUE.background }]}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
             refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#e67e22']} />
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[BLUE.primary]} />
             }
         >
             {renderCategoryHeader()}
@@ -357,20 +379,20 @@ export default function CategoryServicesScreen() {
 
             <View style={styles.subCategoriesSection}>
                 <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Sub-Categories</Text>
-                    <View style={styles.availableBadge}>
-                        <View style={styles.availableDot} />
-                        <Text style={styles.availableText}>{availableCount} available</Text>
+                    <Text style={[styles.sectionTitle, { color: BLUE.text }]}>Sub-Categories</Text>
+                    <View style={[styles.availableBadge, { backgroundColor: BLUE.successBg }]}>
+                        <View style={[styles.availableDot, { backgroundColor: BLUE.success }]} />
+                        <Text style={[styles.availableText, { color: BLUE.success }]}>{availableCount} available</Text>
                     </View>
                 </View>
 
                 {subCategories.length === 0 ? (
-                    <View style={styles.emptyContainer}>
-                        <View style={styles.emptyIconWrapper}>
-                            <MaterialIcons name="search-off" size={40} color="#cbd5e1" />
+                    <View style={[styles.emptyContainer, { backgroundColor: BLUE.white, borderColor: BLUE.borderLight }]}>
+                        <View style={[styles.emptyIconWrapper, { backgroundColor: BLUE.background }]}>
+                            <MaterialIcons name="search-off" size={40} color={BLUE.textTertiary} />
                         </View>
-                        <Text style={styles.emptyTitle}>No sub-categories found</Text>
-                        <Text style={styles.emptySubtitle}>No services available in this category yet</Text>
+                        <Text style={[styles.emptyTitle, { color: BLUE.text }]}>No sub-categories found</Text>
+                        <Text style={[styles.emptySubtitle, { color: BLUE.textSecondary }]}>No services available in this category yet</Text>
                     </View>
                 ) : (
                     <View style={styles.subCategoriesGrid}>
@@ -389,7 +411,7 @@ export default function CategoryServicesScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+        backgroundColor: BLUE.background,
     },
     scrollContent: {
         paddingBottom: 40,
@@ -398,17 +420,14 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
         paddingVertical: 40,
     },
     loadingText: {
         marginTop: 12,
         fontSize: 14,
-        color: '#64748b',
     },
 
     headerContainer: {
-        backgroundColor: '#ffffff',
         borderBottomLeftRadius: 28,
         borderBottomRightRadius: 28,
         overflow: 'hidden',
@@ -416,7 +435,7 @@ const styles = StyleSheet.create({
         marginHorizontal: 0,
         ...Platform.select({
             ios: {
-                shadowColor: '#0f172a',
+                shadowColor: '#000000',
                 shadowOffset: { width: 0, height: 4 },
                 shadowOpacity: 0.06,
                 shadowRadius: 12,
@@ -445,21 +464,9 @@ const styles = StyleSheet.create({
         width: 88,
         height: 88,
         borderRadius: 44,
-        backgroundColor: '#ffffff',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
-        ...Platform.select({
-            ios: {
-                shadowColor: '#0f172a',
-                shadowOffset: { width: 0, height: 6 },
-                shadowOpacity: 0.08,
-                shadowRadius: 16,
-            },
-            android: {
-                elevation: 4,
-            },
-        }),
         borderWidth: 2,
     },
     categoryIconFallback: {
@@ -480,14 +487,12 @@ const styles = StyleSheet.create({
     categoryName: {
         fontSize: 26,
         fontWeight: '800',
-        color: '#0f172a',
         marginBottom: 6,
         letterSpacing: -0.5,
         textAlign: 'center',
     },
     categoryDescription: {
         fontSize: 14,
-        color: '#64748b',
         lineHeight: 20,
         marginBottom: 18,
         textAlign: 'center',
@@ -511,7 +516,6 @@ const styles = StyleSheet.create({
     },
     statLabel: {
         fontSize: 12,
-        color: '#64748b',
         fontWeight: '500',
     },
 
@@ -524,7 +528,7 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         ...Platform.select({
             ios: {
-                shadowColor: '#f97316',
+                shadowColor: '#2563eb',
                 shadowOffset: { width: 0, height: 4 },
                 shadowOpacity: 0.2,
                 shadowRadius: 12,
@@ -537,7 +541,6 @@ const styles = StyleSheet.create({
     consultationGradient: {
         paddingHorizontal: 20,
         paddingVertical: 16,
-        borderRadius: 16,
     },
     consultationContent: {
         flexDirection: 'row',
@@ -590,14 +593,12 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: 20,
         fontWeight: '800',
-        color: '#0f172a',
         letterSpacing: -0.3,
     },
     availableBadge: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: '#f0fdf4',
         paddingHorizontal: 10,
         paddingVertical: 4,
         borderRadius: 20,
@@ -606,11 +607,9 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: '#22c55e',
     },
     availableText: {
         fontSize: 12,
-        color: '#16a34a',
         fontWeight: '600',
     },
 
@@ -628,10 +627,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#f1f5f9',
+        borderColor: BLUE.borderLight,
+        overflow: 'hidden',
+        maxWidth: CARD_WIDTH,
         ...Platform.select({
             ios: {
-                shadowColor: '#0f172a',
+                shadowColor: '#000000',
                 shadowOffset: { width: 0, height: 4 },
                 shadowOpacity: 0.06,
                 shadowRadius: 12,
@@ -640,8 +641,6 @@ const styles = StyleSheet.create({
                 elevation: 3,
             },
         }),
-        overflow: 'hidden',
-        maxWidth: CARD_WIDTH,
     },
     fillerCard: {
         backgroundColor: 'transparent',
@@ -712,7 +711,6 @@ const styles = StyleSheet.create({
     },
     comingSoonText: {
         fontSize: 10,
-        color: '#94a3b8',
         fontWeight: '700',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
@@ -724,13 +722,11 @@ const styles = StyleSheet.create({
     subCategoryName: {
         fontSize: 15,
         fontWeight: '700',
-        color: '#0f172a',
         marginBottom: 4,
         letterSpacing: -0.2,
     },
     subCategoryDescription: {
         fontSize: 12,
-        color: '#94a3b8',
         lineHeight: 16,
         marginBottom: 10,
     },
@@ -760,17 +756,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 60,
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#f1f5f9',
         marginTop: 10,
     },
     emptyIconWrapper: {
         width: 80,
         height: 80,
         borderRadius: 40,
-        backgroundColor: '#f8fafc',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
@@ -778,12 +770,10 @@ const styles = StyleSheet.create({
     emptyTitle: {
         fontSize: 17,
         fontWeight: '700',
-        color: '#0f172a',
         marginBottom: 4,
     },
     emptySubtitle: {
         fontSize: 13,
-        color: '#94a3b8',
         textAlign: 'center',
         paddingHorizontal: 30,
         lineHeight: 18,

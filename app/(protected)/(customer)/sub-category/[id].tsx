@@ -32,6 +32,37 @@ import { useCartQuery, useAddToCart, useRemoveFromCart, useCartCount } from '../
 const { width } = Dimensions.get('window');
 
 // ============================================
+// BLUE THEME CONSTANTS
+// ============================================
+
+const BLUE = {
+    primary: '#2563eb',
+    primaryLight: '#3b82f6',
+    primaryDark: '#1d4ed8',
+    primaryBg: 'rgba(37, 99, 235, 0.08)',
+    primaryBgLight: 'rgba(37, 99, 235, 0.12)',
+    primaryBgMedium: 'rgba(37, 99, 235, 0.15)',
+    gradientStart: '#2563eb',
+    gradientEnd: '#1d4ed8',
+    text: '#000000',
+    textSecondary: '#333333',
+    textTertiary: '#666666',
+    textInverse: '#ffffff',
+    border: '#e2e8f0',
+    borderLight: '#f1f5f9',
+    white: '#ffffff',
+    black: '#000000',
+    background: '#f8fafc',
+    surface: '#ffffff',
+    success: '#22c55e',
+    successBg: 'rgba(34, 197, 94, 0.08)',
+    error: '#ef4444',
+    errorBg: 'rgba(239, 68, 68, 0.08)',
+    warning: '#f59e0b',
+    warningBg: 'rgba(245, 158, 11, 0.08)',
+};
+
+// ============================================
 // TYPES
 // ============================================
 
@@ -119,9 +150,9 @@ export default function SubCategoryDetailScreen() {
     useEffect(() => {
         navigation.setOptions({
             title: (name as string) || 'Services',
-            headerTitleStyle: { fontWeight: '600', fontSize: 18 },
+            headerTitleStyle: { fontWeight: '600', fontSize: 18, color: BLUE.text },
             headerShadowVisible: false,
-            headerStyle: { backgroundColor: '#ffffff' },
+            headerStyle: { backgroundColor: BLUE.white },
             headerRight: () => (
                 <TouchableOpacity
                     onPress={handleCartPress}
@@ -129,7 +160,7 @@ export default function SubCategoryDetailScreen() {
                     activeOpacity={0.7}
                 >
                     <View style={styles.cartIconContainer}>
-                        <Ionicons name="cart-outline" size={24} color="#0f172a" />
+                        <Ionicons name="cart-outline" size={24} color={BLUE.text} />
                         {(cartCount || 0) > 0 && (
                             <Animated.View
                                 style={[
@@ -282,7 +313,7 @@ export default function SubCategoryDetailScreen() {
         router.push('/cart');
     };
 
-    const getColor = (): string => (categoryColor as string) || '#e67e22';
+    const getColor = (): string => (categoryColor as string) || BLUE.primary;
 
     // ============================================
     // RENDER HELPERS
@@ -303,6 +334,7 @@ export default function SubCategoryDetailScreen() {
                     style={[
                         styles.serviceItemCard,
                         isInCart && { borderColor: hexToRgba(color, 0.3) },
+                        { borderColor: BLUE.borderLight, backgroundColor: BLUE.white },
                     ]}
                 >
                     {/* ---- Top row: image + info (tappable → details) ---- */}
@@ -314,7 +346,7 @@ export default function SubCategoryDetailScreen() {
                         <View
                             style={[
                                 styles.serviceImageContainer,
-                                { backgroundColor: hexToRgba(color, 0.08) },
+                                { backgroundColor: BLUE.primaryBg },
                             ]}
                         >
                             {item.imageUrl ? (
@@ -338,23 +370,23 @@ export default function SubCategoryDetailScreen() {
                         </View>
 
                         <View style={styles.serviceInfo}>
-                            <Text style={styles.serviceName} numberOfLines={1}>
+                            <Text style={[styles.serviceName, { color: BLUE.text }]} numberOfLines={1}>
                                 {item.name}
                             </Text>
-                            <Text style={styles.serviceDescription} numberOfLines={2}>
+                            <Text style={[styles.serviceDescription, { color: BLUE.textSecondary }]} numberOfLines={2}>
                                 {item.description || 'Professional service at your doorstep'}
                             </Text>
                             <View style={styles.serviceMeta}>
                                 <View>
-                                    <Text style={styles.priceLabel}>From</Text>
+                                    <Text style={[styles.priceLabel, { color: BLUE.textTertiary }]}>From</Text>
                                     <Text style={[styles.servicePrice, { color }]}>
                                         {formatPrice(item.price)}
                                     </Text>
                                 </View>
                                 {item.durationMinutes && (
-                                    <View style={styles.durationBadge}>
-                                        <Ionicons name="time-outline" size={13} color="#64748b" />
-                                        <Text style={styles.durationText}>
+                                    <View style={[styles.durationBadge, { backgroundColor: BLUE.background }]}>
+                                        <Ionicons name="time-outline" size={13} color={BLUE.textTertiary} />
+                                        <Text style={[styles.durationText, { color: BLUE.textSecondary }]}>
                                             {item.durationMinutes} min
                                         </Text>
                                     </View>
@@ -372,6 +404,7 @@ export default function SubCategoryDetailScreen() {
                                     styles.addedButton,
                                     { borderColor: color, backgroundColor: hexToRgba(color, 0.06) },
                                 ],
+                                { borderColor: BLUE.border, backgroundColor: BLUE.white },
                             ]}
                             onPress={() => handleAddToCart(item)}
                             activeOpacity={0.7}
@@ -380,9 +413,9 @@ export default function SubCategoryDetailScreen() {
                             <Ionicons
                                 name={isInCart ? 'checkmark-circle' : 'add-circle-outline'}
                                 size={18}
-                                color={isInCart ? color : '#94a3b8'}
+                                color={isInCart ? color : BLUE.textTertiary}
                             />
-                            <Text style={[styles.addButtonText, isInCart && { color }]}>
+                            <Text style={[styles.addButtonText, isInCart && { color }, { color: BLUE.textSecondary }]}>
                                 {isInCart ? 'Added' : 'Add'}
                             </Text>
                         </TouchableOpacity>
@@ -393,8 +426,8 @@ export default function SubCategoryDetailScreen() {
                             activeOpacity={0.8}
                             disabled={isUpdating}
                         >
-                            <Text style={styles.orderButtonText}>Order Now</Text>
-                            <Ionicons name="arrow-forward" size={16} color="#fff" />
+                            <Text style={[styles.orderButtonText, { color: BLUE.textInverse }]}>Order Now</Text>
+                            <Ionicons name="arrow-forward" size={16} color={BLUE.textInverse} />
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -409,10 +442,10 @@ export default function SubCategoryDetailScreen() {
         return (
             <Animated.View
                 entering={FadeInUp.springify().damping(15)}
-                style={styles.headerContainer}
+                style={[styles.headerContainer, { backgroundColor: BLUE.white, borderBottomColor: BLUE.borderLight }]}
             >
                 <LinearGradient
-                    colors={[hexToRgba(color, 0.04), '#ffffff']}
+                    colors={[hexToRgba(color, 0.04), BLUE.white]}
                     style={styles.headerGradient}
                 >
                     <View
@@ -428,25 +461,25 @@ export default function SubCategoryDetailScreen() {
                             <Text style={[styles.headerInitials, { color }]}>{initials}</Text>
                         )}
                     </View>
-                    <Text style={styles.headerTitle}>{subCategory?.name || name}</Text>
+                    <Text style={[styles.headerTitle, { color: BLUE.text }]}>{subCategory?.name || name}</Text>
                     {subCategory?.description && (
-                        <Text style={styles.headerDescription}>
+                        <Text style={[styles.headerDescription, { color: BLUE.textSecondary }]}>
                             {subCategory.description}
                         </Text>
                     )}
-                    <View style={styles.headerStats}>
+                    <View style={[styles.headerStats, { backgroundColor: BLUE.white, borderColor: BLUE.borderLight }]}>
                         <View style={styles.statItem}>
                             <MaterialIcons name="handyman" size={16} color={color} />
-                            <Text style={styles.statText}>
+                            <Text style={[styles.statText, { color: BLUE.textSecondary }]}>
                                 {items.length} {items.length === 1 ? 'Service' : 'Services'}
                             </Text>
                         </View>
                         {subCategory?.isPopular && (
                             <>
-                                <View style={styles.statDivider} />
+                                <View style={[styles.statDivider, { backgroundColor: BLUE.border }]} />
                                 <View style={styles.statItem}>
-                                    <MaterialIcons name="star" size={16} color="#fbbf24" />
-                                    <Text style={styles.statText}>Popular</Text>
+                                    <MaterialIcons name="star" size={16} color={BLUE.warning} />
+                                    <Text style={[styles.statText, { color: BLUE.textSecondary }]}>Popular</Text>
                                 </View>
                             </>
                         )}
@@ -461,18 +494,18 @@ export default function SubCategoryDetailScreen() {
             entering={FadeInDown.delay(200).springify()}
             style={styles.searchContainer}
         >
-            <View style={styles.searchBar}>
-                <Feather name="search" size={18} color="#94a3b8" />
+            <View style={[styles.searchBar, { backgroundColor: BLUE.white, borderColor: BLUE.border }]}>
+                <Feather name="search" size={18} color={BLUE.textTertiary} />
                 <TextInput
-                    style={styles.searchInput}
+                    style={[styles.searchInput, { color: BLUE.text }]}
                     placeholder={`Search in ${subCategory?.name || name}...`}
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={BLUE.textTertiary}
                     value={searchQuery}
                     onChangeText={setSearchQuery}
                 />
                 {searchQuery.length > 0 && (
                     <TouchableOpacity onPress={() => setSearchQuery('')}>
-                        <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                        <Ionicons name="close-circle" size={18} color={BLUE.textTertiary} />
                     </TouchableOpacity>
                 )}
             </View>
@@ -480,14 +513,14 @@ export default function SubCategoryDetailScreen() {
     );
 
     const renderError = () => (
-        <Animated.View entering={FadeInDown.springify()} style={styles.errorContainer}>
-            <View style={styles.errorIconWrapper}>
-                <MaterialIcons name="wifi-off" size={48} color="#cbd5e1" />
+        <Animated.View entering={FadeInDown.springify()} style={[styles.errorContainer, { backgroundColor: BLUE.white, borderColor: BLUE.borderLight }]}>
+            <View style={[styles.errorIconWrapper, { backgroundColor: BLUE.errorBg }]}>
+                <MaterialIcons name="wifi-off" size={48} color={BLUE.textTertiary} />
             </View>
-            <Text style={styles.errorTitle}>Something went wrong</Text>
-            <Text style={styles.errorSubtitle}>{error}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={fetchSubCategoryDetail}>
-                <Text style={styles.retryButtonText}>Try Again</Text>
+            <Text style={[styles.errorTitle, { color: BLUE.text }]}>Something went wrong</Text>
+            <Text style={[styles.errorSubtitle, { color: BLUE.textSecondary }]}>{error}</Text>
+            <TouchableOpacity style={[styles.retryButton, { backgroundColor: BLUE.primary }]} onPress={fetchSubCategoryDetail}>
+                <Text style={[styles.retryButtonText, { color: BLUE.textInverse }]}>Try Again</Text>
             </TouchableOpacity>
         </Animated.View>
     );
@@ -498,16 +531,16 @@ export default function SubCategoryDetailScreen() {
 
     if (loading && !refreshing) {
         return (
-            <View style={styles.loadingContainer}>
+            <View style={[styles.loadingContainer, { backgroundColor: BLUE.background }]}>
                 <ActivityIndicator size="large" color={getColor()} />
-                <Text style={styles.loadingText}>Loading services...</Text>
+                <Text style={[styles.loadingText, { color: BLUE.textSecondary }]}>Loading services...</Text>
             </View>
         );
     }
 
     return (
-        <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-            <View style={styles.container}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: BLUE.background }]} edges={['bottom']}>
+            <View style={[styles.container, { backgroundColor: BLUE.background }]}>
                 <ScrollView
                     style={styles.scrollView}
                     showsVerticalScrollIndicator={false}
@@ -528,17 +561,17 @@ export default function SubCategoryDetailScreen() {
                         ) : filteredItems.length === 0 ? (
                             <Animated.View
                                 entering={FadeInDown.springify()}
-                                style={styles.emptyContainer}
+                                style={[styles.emptyContainer, { backgroundColor: BLUE.white, borderColor: BLUE.borderLight }]}
                             >
-                                <View style={styles.emptyIconWrapper}>
-                                    <MaterialIcons name="search-off" size={48} color="#cbd5e1" />
+                                <View style={[styles.emptyIconWrapper, { backgroundColor: BLUE.background }]}>
+                                    <MaterialIcons name="search-off" size={48} color={BLUE.textTertiary} />
                                 </View>
-                                <Text style={styles.emptyTitle}>
+                                <Text style={[styles.emptyTitle, { color: BLUE.text }]}>
                                     {searchQuery
                                         ? 'No services match your search'
                                         : 'No services available'}
                                 </Text>
-                                <Text style={styles.emptySubtitle}>
+                                <Text style={[styles.emptySubtitle, { color: BLUE.textSecondary }]}>
                                     {searchQuery
                                         ? 'Try a different search term'
                                         : 'Check back later for new services'}
@@ -576,18 +609,18 @@ export default function SubCategoryDetailScreen() {
                             >
                                 <View style={styles.floatingCartContent}>
                                     <View style={styles.floatingCartLeft}>
-                                        <Ionicons name="cart" size={22} color="#fff" />
-                                        <View style={styles.floatingCartBadge}>
-                                            <Text style={styles.floatingCartBadgeText}>
+                                        <Ionicons name="cart" size={22} color={BLUE.textInverse} />
+                                        <View style={[styles.floatingCartBadge, { backgroundColor: 'rgba(255,255,255,0.25)' }]}>
+                                            <Text style={[styles.floatingCartBadgeText, { color: BLUE.textInverse }]}>
                                                 {cartCount || 0}
                                             </Text>
                                         </View>
                                     </View>
-                                    <View style={styles.floatingCartDivider} />
-                                    <Text style={styles.floatingCartText}>
+                                    <View style={[styles.floatingCartDivider, { backgroundColor: 'rgba(255,255,255,0.2)' }]} />
+                                    <Text style={[styles.floatingCartText, { color: BLUE.textInverse }]}>
                                         View Cart • {formatPrice(cartData?.subtotal || 0)}
                                     </Text>
-                                    <Ionicons name="chevron-forward" size={20} color="#fff" />
+                                    <Ionicons name="chevron-forward" size={20} color={BLUE.textInverse} />
                                 </View>
                             </LinearGradient>
                         </TouchableOpacity>
@@ -605,11 +638,9 @@ export default function SubCategoryDetailScreen() {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
     },
     scrollView: {
         flex: 1,
@@ -620,20 +651,16 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f8fafc',
         paddingVertical: 40,
     },
     loadingText: {
         marginTop: 12,
         fontSize: 14,
-        color: '#64748b',
     },
 
     // ---- Header ----
     headerContainer: {
-        backgroundColor: '#ffffff',
         borderBottomWidth: 1,
-        borderBottomColor: '#f1f5f9',
     },
     headerGradient: {
         alignItems: 'center',
@@ -668,14 +695,12 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: 22,
         fontWeight: '700',
-        color: '#0f172a',
         marginBottom: 4,
         letterSpacing: -0.5,
         textAlign: 'center',
     },
     headerDescription: {
         fontSize: 13,
-        color: '#64748b',
         lineHeight: 18,
         textAlign: 'center',
         marginBottom: 14,
@@ -685,12 +710,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#ffffff',
         paddingVertical: 6,
         paddingHorizontal: 16,
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#f0f2f5',
     },
     statItem: {
         flexDirection: 'row',
@@ -699,13 +722,11 @@ const styles = StyleSheet.create({
     },
     statText: {
         fontSize: 12,
-        color: '#475569',
         fontWeight: '500',
     },
     statDivider: {
         width: 1,
         height: 14,
-        backgroundColor: '#cbd5e1',
         marginHorizontal: 14,
     },
 
@@ -718,12 +739,10 @@ const styles = StyleSheet.create({
     searchBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#ffffff',
         borderRadius: 14,
         paddingHorizontal: 14,
         height: 46,
         borderWidth: 1,
-        borderColor: '#e2e8f0',
         gap: 10,
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
@@ -734,7 +753,6 @@ const styles = StyleSheet.create({
     searchInput: {
         flex: 1,
         fontSize: 14,
-        color: '#1e293b',
         paddingVertical: 0,
     },
 
@@ -750,10 +768,8 @@ const styles = StyleSheet.create({
 
     // ---- Service card (vertical: info top, actions bottom) ----
     serviceItemCard: {
-        backgroundColor: '#ffffff',
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#f1f5f9',
         overflow: 'hidden',
         shadowColor: '#0f172a',
         shadowOffset: { width: 0, height: 2 },
@@ -807,11 +823,9 @@ const styles = StyleSheet.create({
     serviceName: {
         fontSize: 15,
         fontWeight: '600',
-        color: '#0f172a',
     },
     serviceDescription: {
         fontSize: 12,
-        color: '#64748b',
         lineHeight: 16,
     },
     serviceMeta: {
@@ -822,7 +836,6 @@ const styles = StyleSheet.create({
     },
     priceLabel: {
         fontSize: 9,
-        color: '#94a3b8',
         textTransform: 'uppercase',
         letterSpacing: 0.5,
     },
@@ -834,14 +847,12 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
-        backgroundColor: '#f1f5f9',
         paddingHorizontal: 10,
         paddingVertical: 5,
         borderRadius: 12,
     },
     durationText: {
         fontSize: 11,
-        color: '#64748b',
         fontWeight: '500',
     },
 
@@ -860,8 +871,6 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         borderRadius: 12,
         borderWidth: 1.5,
-        borderColor: '#e2e8f0',
-        backgroundColor: '#ffffff',
         gap: 6,
     },
     addedButton: {
@@ -870,7 +879,6 @@ const styles = StyleSheet.create({
     addButtonText: {
         fontSize: 13,
         fontWeight: '600',
-        color: '#94a3b8',
     },
     orderButton: {
         flex: 1,
@@ -887,9 +895,9 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
     orderButtonText: {
-        color: '#ffffff',
         fontSize: 13,
         fontWeight: '600',
+        color: '#ffffff',
     },
 
     // ---- Empty state ----
@@ -897,17 +905,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 60,
-        backgroundColor: '#ffffff',
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#f1f5f9',
         marginTop: 12,
     },
     emptyIconWrapper: {
         width: 80,
         height: 80,
         borderRadius: 40,
-        backgroundColor: '#f8fafc',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 12,
@@ -915,12 +920,10 @@ const styles = StyleSheet.create({
     emptyTitle: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#0f172a',
         marginTop: 4,
     },
     emptySubtitle: {
         fontSize: 13,
-        color: '#94a3b8',
         marginTop: 4,
         textAlign: 'center',
         paddingHorizontal: 20,
@@ -931,17 +934,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 60,
-        backgroundColor: '#ffffff',
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#f1f5f9',
         marginTop: 12,
     },
     errorIconWrapper: {
         width: 80,
         height: 80,
         borderRadius: 40,
-        backgroundColor: '#fef2f2',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 12,
@@ -949,27 +949,24 @@ const styles = StyleSheet.create({
     errorTitle: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#0f172a',
         marginTop: 4,
     },
     errorSubtitle: {
         fontSize: 13,
-        color: '#94a3b8',
         marginTop: 4,
         textAlign: 'center',
         paddingHorizontal: 20,
         marginBottom: 16,
     },
     retryButton: {
-        backgroundColor: '#0f172a',
         paddingHorizontal: 24,
         paddingVertical: 10,
         borderRadius: 12,
     },
     retryButtonText: {
-        color: '#ffffff',
         fontSize: 14,
         fontWeight: '600',
+        color: '#ffffff',
     },
 
     // ---- Bottom spacer ----
@@ -988,7 +985,6 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: -6,
         right: -8,
-        backgroundColor: '#ef4444',
         borderRadius: 10,
         minWidth: 18,
         height: 18,
@@ -998,10 +994,10 @@ const styles = StyleSheet.create({
         borderColor: '#ffffff',
     },
     cartBadgeText: {
-        color: '#ffffff',
         fontSize: 10,
         fontWeight: '700',
         paddingHorizontal: 4,
+        color: '#ffffff',
     },
 
     // ---- Floating cart button ----
@@ -1038,26 +1034,24 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     floatingCartBadge: {
-        backgroundColor: 'rgba(255,255,255,0.25)',
         borderRadius: 12,
         paddingHorizontal: 8,
         paddingVertical: 2,
     },
     floatingCartBadgeText: {
-        color: '#ffffff',
         fontSize: 12,
         fontWeight: '700',
+        color: '#ffffff',
     },
     floatingCartDivider: {
         width: 1,
         height: 24,
-        backgroundColor: 'rgba(255,255,255,0.2)',
     },
     floatingCartText: {
-        color: '#ffffff',
         fontSize: 14,
         fontWeight: '600',
         flex: 1,
         textAlign: 'center',
+        color: '#ffffff',
     },
 });
